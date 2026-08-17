@@ -151,8 +151,19 @@ func queryOne[T any](ctx context.Context, t *conn.Target, sql string, args ...an
 }
 
 func queryMany[T any](ctx context.Context, t *conn.Target, sql string, args ...any) ([]T, error) {
+	return queryManyLocal[T](ctx, t, nil, sql, args...)
+}
+
+// queryManyLocal is queryMany with transaction-local SET statements run first
+// (SET LOCAL … — they end with the transaction, so the session's pins stay).
+func queryManyLocal[T any](ctx context.Context, t *conn.Target, setLocal []string, sql string, args ...any) ([]T, error) {
 	var out []T
 	err := t.ReadOnlyTx(ctx, func(tx pgx.Tx) error {
+		for _, s := range setLocal {
+			if _, err := tx.Exec(ctx, s); err != nil {
+				return err
+			}
+		}
 		rows, err := tx.Query(ctx, sql, args...)
 		if err != nil {
 			return err

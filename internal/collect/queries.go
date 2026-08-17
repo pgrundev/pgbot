@@ -52,12 +52,24 @@ type queriesSample struct {
 func (queriesCollector) Sample(ctx context.Context, t *conn.Target, caps conn.Capabilities) (any, error) {
 	// The version-appropriate total-time column comes from a fixed allowlist
 	// (never user input); %% in the SQL escapes the ILIKE literal.
-	rows, err := queryMany[queryRow](ctx, t, fmt.Sprintf(sqlQueries, caps.StatStatementsTotalCol()))
+	//
+	// pg_stat_statements is a set-returning function: every row (with up to
+	// 4 KB of query text) is materialized in a tuplestore before ORDER BY/LIMIT,
+	// and the window sum() OVER () keeps all of them. At the default
+	// work_mem=4MB and ~5k tracked statements that is ~5 MB of temp file per
+	// pgbot run — landing inside pgbot's own sample window, where the health
+	// collector reads it back as temp_bytes_per_sec ≈ 1 MiB/s and the tune rule
+	// recommends raising work_mem for it. A transaction-local work_mem keeps
+	// this read in memory (measured: temp written=612 blocks → 0).
+	rows, err := queryManyLocal[queryRow](ctx, t, []string{"SET LOCAL work_mem = '64MB'"},
+		fmt.Sprintf(sqlQueries, caps.StatStatementsTotalCol()))
 	if err != nil {
 		return nil, err
 	}
 	out := queriesSample{Rows: rows}
-	out.Count, _ = scalar[int](ctx, t, `SELECT count(*)::int FROM pg_stat_statements`)
+	// showtext := false — counting through the view materializes every row WITH
+	// its query text (the same ~5 MB tuplestore/temp file as above, for a count).
+	out.Count, _ = scalar[int](ctx, t, `SELECT count(*)::int FROM pg_stat_statements(false)`)
 	if m, err := scalar[int](ctx, t, `SELECT current_setting('pg_stat_statements.max')::int`); err == nil {
 		out.Max = m
 	}
