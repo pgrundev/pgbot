@@ -108,7 +108,7 @@ func runExplain(cmd *cobra.Command, args []string, f inspectFlags, yes bool) err
 	if !f.noStore {
 		trends, baselinePath = withStore(f.storePath, c)
 	}
-	if err := computeFindings(c, f.config, f.ignore); err != nil {
+	if err := computeFindings(c, f); err != nil {
 		return err
 	}
 

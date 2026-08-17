@@ -41,7 +41,7 @@ func gather(ctx context.Context, connString string, f inspectFlags) (*model.Cont
 	if !f.noStore {
 		withStore(f.storePath, c)
 	}
-	if err := computeFindings(c, f.config, f.ignore); err != nil {
+	if err := computeFindings(c, f); err != nil {
 		return nil, "", err
 	}
 	return c, host, nil

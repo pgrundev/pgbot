@@ -128,7 +128,7 @@ func runInspect(cmd *cobra.Command, args []string, f inspectFlags) error {
 	// Deterministic findings — computed in Go, never by a model. Under the active
 	// .pgbot.toml: threshold overrides feed the compute, severity/ignore rules are
 	// applied, suppressed findings are kept (marked) for the renderer.
-	if err := computeFindings(c, f.config, f.ignore); err != nil {
+	if err := computeFindings(c, f); err != nil {
 		return err
 	}
 
