@@ -7,6 +7,7 @@ import (
 )
 
 func ptr(v float64) *float64 { return &v }
+func i64(v int64) *int64     { return &v }
 
 func has(fs []model.Finding, id string) *model.Finding {
 	for i := range fs {
@@ -20,7 +21,7 @@ func has(fs []model.Finding, id string) *model.Finding {
 func TestCompute_flagsRealIssues(t *testing.T) {
 	c := &model.Context{
 		Window:   model.Window{StatsWindowDays: ptr(120), SampleSeconds: 1},
-		Health:   &model.Health{CacheHitRatio: ptr(0.80), RollbackRatio: ptr(0.15), TPS: ptr(200)}, // enough volume to trust the ratio
+		Health:   &model.Health{CacheHitRatio: ptr(0.80), CacheBlocks: i64(50_000), RollbackRatio: ptr(0.15), TPS: ptr(200)}, // enough volume to trust the ratios
 		Activity: &model.Activity{IdleInTransaction: 2, LongestXactSec: 400},
 		Locks:    &model.Locks{BlockedCount: 1, Chains: []model.BlockingRow{{BlockedPID: 42, WaitSeconds: 30}}},
 		Indexes: &model.Indexes{Unused: []model.IndexStat{
@@ -70,7 +71,7 @@ func TestColdWindow_suppressesCounterFindings_keepsGauges(t *testing.T) {
 	cold := int64(120) // 2 min — below the 900s threshold
 	c := &model.Context{
 		Window: model.Window{WindowAgeSeconds: &cold},
-		Health: &model.Health{CacheHitRatio: ptr(0.50)}, // would fire low_cache_hit on a warm window
+		Health: &model.Health{CacheHitRatio: ptr(0.50), CacheBlocks: i64(50_000)}, // would fire low_cache_hit on a warm window
 		Indexes: &model.Indexes{Unused: []model.IndexStat{
 			{Schema: "public", Table: "orders", Name: "big_idx", Bytes: 50 << 20},
 		}},
@@ -424,5 +425,24 @@ func TestTuning_connectionsOverprovisioned(t *testing.T) {
 	// Small max_connections → not flagged.
 	if has(Compute(&model.Context{Limits: &model.Limits{ConnectionsUsed: 5, ConnectionsMax: 100}}), "connections_overprovisioned") != nil {
 		t.Error("max_connections below the floor must not fire")
+	}
+}
+
+// TestLowCacheHit_needsBlockTraffic: a cache-hit ratio measured over a few
+// hundred blocks is noise (one cold read swings it by tens of points), so the
+// finding must not fire — and must not flip the exit code — until the window
+// carries model.CacheHitMinBlocks of traffic.
+func TestLowCacheHit_needsBlockTraffic(t *testing.T) {
+	thin := &model.Context{Health: &model.Health{CacheHitRatio: ptr(0.40), CacheBlocks: i64(model.CacheHitMinBlocks - 1)}}
+	if has(Compute(thin), "low_cache_hit") != nil {
+		t.Fatalf("low_cache_hit fired on %d blocks of traffic — below the %d floor", model.CacheHitMinBlocks-1, model.CacheHitMinBlocks)
+	}
+	unknown := &model.Context{Health: &model.Health{CacheHitRatio: ptr(0.40)}} // no denominator recorded
+	if has(Compute(unknown), "low_cache_hit") != nil {
+		t.Fatal("low_cache_hit fired without a recorded block count")
+	}
+	enough := &model.Context{Health: &model.Health{CacheHitRatio: ptr(0.40), CacheBlocks: i64(model.CacheHitMinBlocks)}}
+	if has(Compute(enough), "low_cache_hit") == nil {
+		t.Fatal("low_cache_hit must fire at the floor with a 40% ratio")
 	}
 }

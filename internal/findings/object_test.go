@@ -47,7 +47,7 @@ func TestCompute_everyFindingHasStableObject(t *testing.T) {
 	contexts := []*model.Context{
 		{
 			Window:   model.Window{StatsWindowDays: ptr(120), SampleSeconds: 1},
-			Health:   &model.Health{CacheHitRatio: ptr(0.80), RollbackRatio: ptr(0.15), TPS: ptr(200)},
+			Health:   &model.Health{CacheHitRatio: ptr(0.80), CacheBlocks: i64(50_000), RollbackRatio: ptr(0.15), TPS: ptr(200)},
 			Activity: &model.Activity{IdleInTransaction: 2, LongestXactSec: 400},
 			Locks:    &model.Locks{BlockedCount: 1, Chains: []model.BlockingRow{{BlockedPID: 42, WaitSeconds: 30}}},
 			Indexes:  &model.Indexes{Unused: []model.IndexStat{{Schema: "public", Table: "orders", Name: "big_idx", Bytes: 5 << 20}}},

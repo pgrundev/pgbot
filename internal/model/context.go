@@ -209,12 +209,28 @@ type Health struct {
 	TPS             *float64 `json:"tps,omitempty"` // commits+rollbacks per second
 	CommitsPerSec   *float64 `json:"commits_per_sec,omitempty"`
 	RollbacksPerSec *float64 `json:"rollbacks_per_sec,omitempty"`
-	RollbackRatio   *float64 `json:"rollback_ratio,omitempty"`  // over the sample window
-	CacheHitRatio   *float64 `json:"cache_hit_ratio,omitempty"` // 0..1 over the sample window
+	RollbackRatio   *float64 `json:"rollback_ratio,omitempty"`       // over the sample window
+	CacheHitRatio   *float64 `json:"cache_hit_ratio,omitempty"`      // 0..1 over the sample window
+	CacheBlocks     *int64   `json:"cache_blocks_sampled,omitempty"` // blks_hit+blks_read within the window — the ratio's denominator
 	DeadlocksPerMin *float64 `json:"deadlocks_per_min,omitempty"`
 	TempBytesPerSec *float64 `json:"temp_bytes_per_sec,omitempty"`
 	TupReturnedPerS *float64 `json:"tuples_returned_per_sec,omitempty"`
 	TupWrittenPerS  *float64 `json:"tuples_written_per_sec,omitempty"` // ins+upd+del
+}
+
+// CacheHitMinBlocks is the block traffic (blks_hit + blks_read, 8 KB each) a
+// sample window must contain before its cache-hit ratio is a signal: 10,000
+// blocks = 80 MB. Below that a few cold reads swing the ratio by tens of
+// points between consecutive runs (measured 58 → 99.7 % on a ~10 tps
+// database whose 30 s ratio was a steady 69 %), flipping the finding, the
+// health score and the exit code on noise.
+const CacheHitMinBlocks = 10_000
+
+// CacheHitUsable reports whether the sampled cache-hit ratio rests on enough
+// block traffic to be graded (see CacheHitMinBlocks). Callers that print or
+// judge the ratio must check this, not just != nil.
+func (h *Health) CacheHitUsable() bool {
+	return h != nil && h.CacheHitRatio != nil && h.CacheBlocks != nil && *h.CacheBlocks >= CacheHitMinBlocks
 }
 
 // Activity is a point-in-time read of pg_stat_activity.

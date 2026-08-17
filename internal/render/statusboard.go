@@ -106,7 +106,13 @@ func buildBoard(c *model.Context) []boardRow {
 		rows = append(rows, boardRow{"connections", connStatus, connKind, connVal, note})
 		if h.CacheHitRatio != nil {
 			s, k := statusFor("low_cache_hit")
-			rows = append(rows, boardRow{"cache", s, k, pct(*h.CacheHitRatio), ""})
+			note := ""
+			if !h.CacheHitUsable() {
+				// too little block traffic in the window to grade — show the
+				// number, not a verdict (see model.CacheHitMinBlocks)
+				s, k, note = "n/a", kInfo, "thin sample"
+			}
+			rows = append(rows, boardRow{"cache", s, k, pct(*h.CacheHitRatio), note})
 		}
 		if h.TPS != nil {
 			rows = append(rows, boardRow{"throughput", "ok", kOK, humanNum(*h.TPS) + " tps", ""})

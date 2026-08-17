@@ -64,6 +64,8 @@ func (healthCollector) Assemble(c *model.Context, _ conn.Capabilities, s sampled
 	}
 	if chr, ok := rate.Ratio(a.BlksHit, b.BlksHit, a.BlksRead, b.BlksRead); ok {
 		h.CacheHitRatio = round4p(chr)
+		blocks := (b.BlksHit + b.BlksRead) - (a.BlksHit + a.BlksRead)
+		h.CacheBlocks = &blocks
 	}
 	if d, ok := rate.PerSecond(a.Deadlocks, b.Deadlocks, dt); ok {
 		h.DeadlocksPerMin = rate.Ptr(round2(*d * 60))

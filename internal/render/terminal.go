@@ -265,7 +265,7 @@ func passedChecks(c *model.Context) []string {
 		{"unused indexes", "unused_indexes", c.Indexes != nil && !c.Window.ColdWindow()},
 		{"table bloat", "table_bloat", c.Tables != nil},
 		{"sequential scans", "seq_scan_heavy", c.Tables != nil && !c.Window.ColdWindow()},
-		{"cache hit", "low_cache_hit", c.Health != nil && c.Health.CacheHitRatio != nil && !c.Window.ColdWindow()},
+		{"cache hit", "low_cache_hit", c.Health.CacheHitUsable() && !c.Window.ColdWindow()},
 		{"idle transactions", "idle_in_transaction", c.Activity != nil},
 		{"long transactions", "long_running_transaction", c.Activity != nil},
 		{"rollbacks", "high_rollback_ratio", c.Health != nil && c.Health.RollbackRatio != nil},

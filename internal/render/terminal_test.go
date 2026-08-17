@@ -13,12 +13,13 @@ import (
 func sampleContext() *model.Context {
 	tps := 1200.0
 	hit := 0.994
+	blocks := int64(250_000) // enough block traffic for the ratio to be graded
 	return &model.Context{
 		SchemaVersion: model.SchemaVersion,
 		CollectedAt:   time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC),
 		Server:        model.ServerInfo{VersionNum: 170010, Database: "app", HasPgMonitor: true},
 		Window:        model.Window{SampleSeconds: 1.0},
-		Health:        &model.Health{Section: model.Section{Exactness: model.ExactnessSampled}, Connections: 24, TPS: &tps, CacheHitRatio: &hit},
+		Health:        &model.Health{Section: model.Section{Exactness: model.ExactnessSampled}, Connections: 24, TPS: &tps, CacheHitRatio: &hit, CacheBlocks: &blocks},
 		Activity:      &model.Activity{Section: model.Section{Exactness: model.ExactnessScraped}, Total: 24, Active: 6},
 		Findings: []model.Finding{
 			{ID: "unused_indexes", Severity: model.SeverityWarn, Title: "1 unused index",

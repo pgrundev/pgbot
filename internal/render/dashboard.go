@@ -151,7 +151,7 @@ func buildGood(c *model.Context) []string {
 	}
 	var g []string
 	if h := c.Health; h != nil {
-		if h.CacheHitRatio != nil && !fired["low_cache_hit"] {
+		if h.CacheHitUsable() && !fired["low_cache_hit"] {
 			g = append(g, fmt.Sprintf("cache hit ratio %.1f%%", *h.CacheHitRatio*100))
 		}
 		if h.DeadlocksPerMin != nil && *h.DeadlocksPerMin == 0 {
