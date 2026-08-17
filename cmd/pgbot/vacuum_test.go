@@ -3,23 +3,36 @@ package main
 import (
 	"testing"
 	"time"
+
+	"github.com/pgrundev/pgbot/internal/model"
 )
 
 func TestExpectAutovacuum(t *testing.T) {
+	const th, sc = avDefaultThreshold, avDefaultScaleFactor
+	f := func(v float64) *float64 { return &v }
 	cases := []struct {
+		name       string
 		live, dead int64
+		disabled   bool
+		thOver     *float64
+		scOver     *float64
 		want       bool
 	}{
-		{0, 50, false},      // exactly at threshold — not yet past
-		{0, 51, true},       // one over the base threshold of 50
-		{1000, 200, false},  // 200 < 50 + 0.2*1000 = 250
-		{1000, 300, true},   // 300 > 250
-		{100000, 20000, false},
-		{100000, 20100, true}, // 20100 > 50 + 20000
+		{"at base threshold", 0, 50, false, nil, nil, false},
+		{"one over base", 0, 51, false, nil, nil, true},
+		{"under default trigger", 1000, 200, false, nil, nil, false}, // 200 < 50 + 0.2*1000
+		{"over default trigger", 1000, 300, false, nil, nil, true},
+		{"large under", 100000, 20000, false, nil, nil, false},
+		{"large over", 100000, 20100, false, nil, nil, true},
+		{"autovacuum disabled is never due", 1000, 999999, true, nil, nil, false},
+		{"per-table scale override raises the bar", 1000, 300, false, nil, f(0.5), false}, // 300 < 50 + 0.5*1000
+		{"per-table threshold override lowers it", 0, 30, false, f(20), nil, true},        // 30 > 20
 	}
 	for _, c := range cases {
-		if got := expectAutovacuum(c.live, c.dead); got != c.want {
-			t.Errorf("expectAutovacuum(live=%d, dead=%d) = %v, want %v", c.live, c.dead, got, c.want)
+		ts := model.TableStat{LiveTuples: c.live, DeadTuples: c.dead, AutovacuumDisabled: c.disabled,
+			VacuumThresholdOverride: c.thOver, VacuumScaleOverride: c.scOver}
+		if got := expectAutovacuum(ts, th, sc); got != c.want {
+			t.Errorf("%s: expectAutovacuum(live=%d, dead=%d) = %v, want %v", c.name, c.live, c.dead, got, c.want)
 		}
 	}
 }

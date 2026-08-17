@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"text/tabwriter"
 	"time"
 
@@ -69,9 +70,15 @@ func runVacuum(cmd *cobra.Command, args []string, f inspectFlags) error {
 	tbls := append([]model.TableStat(nil), c.Tables.Top...)
 	sort.SliceStable(tbls, func(i, j int) bool { return tbls[i].DeadTuples > tbls[j].DeadTuples })
 
+	// The trigger is threshold + scale × live_tuples, from the cluster GUCs
+	// (collected in the settings tuning set) with per-table reloptions taking
+	// precedence. Fall back to Postgres' compiled defaults if settings are absent.
+	gThreshold := settingFloat(c, "autovacuum_vacuum_threshold", avDefaultThreshold)
+	gScale := settingFloat(c, "autovacuum_vacuum_scale_factor", avDefaultScaleFactor)
+
 	behind := 0
 	for _, t := range tbls {
-		if expectAutovacuum(t.LiveTuples, t.DeadTuples) {
+		if expectAutovacuum(t, gThreshold, gScale) {
 			behind++
 		}
 	}
@@ -86,7 +93,7 @@ func runVacuum(cmd *cobra.Command, args []string, f inspectFlags) error {
 	fmt.Fprintln(tw, "  table\tlive\tdead\tdead%\tlast autovacuum\tdue?")
 	for _, t := range tbls {
 		due := st.Dim("no")
-		if expectAutovacuum(t.LiveTuples, t.DeadTuples) {
+		if expectAutovacuum(t, gThreshold, gScale) {
 			due = st.Warn("yes")
 		}
 		name := t.Schema + "." + t.Name
@@ -96,13 +103,51 @@ func runVacuum(cmd *cobra.Command, args []string, f inspectFlags) error {
 	}
 	tw.Flush()
 	fmt.Println()
-	fmt.Println(st.Dim("due? = dead tuples past Postgres' default autovacuum trigger (50 + 20% of live rows)."))
+	fmt.Println(st.Dim(fmt.Sprintf("due? = dead tuples past the autovacuum trigger (threshold %.0f + %.0f%% of live rows; per-table overrides applied).",
+		gThreshold, gScale*100)))
 	fmt.Println(st.Dim("tables ranked by dead tuples, from the 30 largest by size."))
 	return nil
 }
 
-func expectAutovacuum(live, dead int64) bool {
-	return float64(dead) > avDefaultThreshold+avDefaultScaleFactor*float64(live)
+// expectAutovacuum reports whether a table's dead tuples have passed its
+// autovacuum trigger. Per-table reloptions win over the cluster defaults passed
+// in; a table with autovacuum_enabled=false will never be autovacuumed, so it is
+// never "due" (that is the autovacuum_disabled finding's job, not this column's).
+func expectAutovacuum(t model.TableStat, gThreshold, gScale float64) bool {
+	if t.AutovacuumDisabled {
+		return false
+	}
+	threshold, scale := gThreshold, gScale
+	if t.VacuumThresholdOverride != nil {
+		threshold = *t.VacuumThresholdOverride
+	}
+	if t.VacuumScaleOverride != nil {
+		scale = *t.VacuumScaleOverride
+	}
+	return float64(t.DeadTuples) > threshold+scale*float64(t.LiveTuples)
+}
+
+// avVacThreshold / avVacScale are the cluster autovacuum trigger knobs (with the
+// compiled-in defaults as fallback), shared by the vacuum command and the MCP
+// vacuum_health tool so both grade "due" the same way.
+func avVacThreshold(c *model.Context) float64 {
+	return settingFloat(c, "autovacuum_vacuum_threshold", avDefaultThreshold)
+}
+func avVacScale(c *model.Context) float64 {
+	return settingFloat(c, "autovacuum_vacuum_scale_factor", avDefaultScaleFactor)
+}
+
+// settingFloat reads a numeric parameter from the collected settings, or def.
+func settingFloat(c *model.Context, name string, def float64) float64 {
+	if c.Settings == nil {
+		return def
+	}
+	if v, ok := c.Settings.Params[name]; ok {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
+		}
+	}
+	return def
 }
 
 // agoStr renders how long ago a timestamp was, or "never" if unset.

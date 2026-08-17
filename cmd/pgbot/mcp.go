@@ -269,7 +269,7 @@ func vacuumHealthTool(ctx context.Context, args json.RawMessage) (string, error)
 	past := 0
 	rows := make([]map[string]any, 0, len(tbls))
 	for _, t := range tbls {
-		due := expectAutovacuum(t.LiveTuples, t.DeadTuples)
+		due := expectAutovacuum(t, avVacThreshold(c), avVacScale(c))
 		if due {
 			past++
 		}
