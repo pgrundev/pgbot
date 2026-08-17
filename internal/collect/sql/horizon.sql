@@ -16,7 +16,8 @@ FROM (
                 THEN ', xact ' || round(extract(epoch FROM now() - xact_start))::text || 's'
                 ELSE '' END, ', ') AS detail
   FROM pg_stat_activity
-  WHERE backend_xmin IS NOT NULL AND pid <> pg_backend_pid()
+  WHERE backend_xmin IS NOT NULL
+    AND application_name IS DISTINCT FROM 'pgbot' -- pgbot's own read-only txns hold an xmin too
 
   UNION ALL
   SELECT 'replication_slot', slot_name,

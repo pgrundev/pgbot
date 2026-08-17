@@ -88,8 +88,14 @@ func (activityCollector) Assemble(c *model.Context, _ conn.Capabilities, s sampl
 			act.IdleInTransaction += r.N
 		}
 		if r.WaitEventType != "" {
-			act.Waiting += r.N
 			act.WaitEvents[r.WaitEventType] += r.N
+			// "Waiting" means blocked on something inside the server (Lock, IO,
+			// LWLock, …). An idle backend always shows wait_event_type='Client'
+			// (ClientRead: waiting for the application to send the next query) —
+			// counting it would make every idle connection "waiting".
+			if r.WaitEventType != "Client" {
+				act.Waiting += r.N
+			}
 		}
 		if r.MaxXactAgeS > act.LongestXactSec {
 			act.LongestXactSec = round2(r.MaxXactAgeS)

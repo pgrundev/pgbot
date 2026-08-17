@@ -7,7 +7,7 @@ SELECT coalesce(nullif(application_name, ''), '(none)') AS app_name,
        coalesce(state, 'unknown')                        AS state,
        count(*)                                          AS n
 FROM pg_stat_activity
-WHERE backend_type = 'client backend' AND pid <> pg_backend_pid()
+WHERE backend_type = 'client backend' AND application_name IS DISTINCT FROM 'pgbot'
 GROUP BY 1, 2, 3
 ORDER BY n DESC
 LIMIT 10;

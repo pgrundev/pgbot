@@ -219,7 +219,7 @@ type Activity struct {
 	Active              int            `json:"active"`
 	Idle                int            `json:"idle"`
 	IdleInTransaction   int            `json:"idle_in_transaction"`
-	Waiting             int            `json:"waiting"`
+	Waiting             int            `json:"waiting"` // blocked inside the server (any wait_event_type except Client)
 	ByState             map[string]int `json:"by_state"`
 	WaitEvents          map[string]int `json:"wait_events,omitempty"`
 	LongestXactSec      float64        `json:"longest_xact_sec"`

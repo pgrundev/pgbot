@@ -79,12 +79,20 @@ func (t *Target) Close() {
 	}
 }
 
+// AppName is the application_name every pgbot session carries. Every read of
+// pg_stat_activity filters on it (`application_name IS DISTINCT FROM 'pgbot'`)
+// so pgbot never counts its own pool or wait-sampler connections as the
+// database's activity — connections, idle-in-transaction, xmin holders, ASH.
+// A `pid <> pg_backend_pid()` filter only hides the one backend running that
+// query; the rest of the pool is still visible to it.
+const AppName = "pgbot"
+
 // applySessionSetup pins every physical connection. statement_timeout and
 // lock_timeout are mandatory: pgbot must never become the incident it was
 // invoked to diagnose.
 func applySessionSetup(ctx context.Context, c *pgx.Conn, caps Capabilities) error {
 	stmts := []string{
-		"SET application_name = 'pgbot'",
+		"SET application_name = '" + AppName + "'",
 		"SET statement_timeout = '15s'",
 		"SET lock_timeout = '2s'",
 		"SET idle_in_transaction_session_timeout = '10s'",

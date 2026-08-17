@@ -22,8 +22,10 @@ type WaitSample struct {
 	AppName       string  `db:"app_name"`
 }
 
-// ashSQL selects the currently-active non-self backends. query_id is PG14+; on
-// older servers we select a NULL literal so the column reference never errors.
+// ashSQL selects the currently-active backends that are not pgbot's own — the
+// pool's collectors run concurrently with the sampler and would otherwise show
+// up as CPU/IO samples. query_id is PG14+; on older servers we select a NULL
+// literal so the column reference never errors.
 func ashSQL(caps conn.Capabilities) string {
 	qid := "NULL::bigint"
 	if caps.VersionNum >= 140000 {
@@ -32,7 +34,7 @@ func ashSQL(caps conn.Capabilities) string {
 	return `SELECT pid, state, wait_event_type, wait_event, ` + qid + ` AS query_id,
 	               backend_type, coalesce(application_name, '') AS app_name
 	        FROM pg_stat_activity
-	        WHERE state = 'active' AND pid <> pg_backend_pid()`
+	        WHERE state = 'active' AND application_name IS DISTINCT FROM 'pgbot'`
 }
 
 // ashResult is what one sampling window produced. attempts/failures let the
