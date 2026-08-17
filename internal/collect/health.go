@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/pgrundev/pgbot/internal/conn"
 	"github.com/pgrundev/pgbot/internal/model"
 	"github.com/pgrundev/pgbot/internal/rate"
@@ -41,7 +42,16 @@ func (healthCollector) Kind() Kind                       { return KindCounter }
 func (healthCollector) Available(conn.Capabilities) bool { return true }
 
 func (healthCollector) Sample(ctx context.Context, t *conn.Target, _ conn.Capabilities) (any, error) {
-	return queryOne[healthSample](ctx, t, sqlHealth)
+	// A single-row read on an already-read-only session — run it directly on the
+	// pool (one round trip) rather than wrapping it in BEGIN/COMMIT (three). The
+	// window is bracketed by two of these serially (runner.go), so the round
+	// trips are on the critical path; the saved transactions are also two fewer
+	// of pgbot's own commits per run.
+	rows, err := t.Pool.Query(ctx, sqlHealth)
+	if err != nil {
+		return healthSample{}, err
+	}
+	return pgx.CollectExactlyOneRow(rows, pgx.RowToStructByNameLax[healthSample])
 }
 
 func (healthCollector) Assemble(c *model.Context, _ conn.Capabilities, s sampled, dt time.Duration, _ Options) {
