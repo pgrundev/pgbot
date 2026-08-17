@@ -633,11 +633,18 @@ func newTab(b *strings.Builder) *tabwriter.Writer {
 }
 
 func truncate(s string, n int) string {
-	s = strings.ReplaceAll(strings.TrimSpace(s), "\n", " ")
-	if len(s) <= n {
+	// Collapse EVERY whitespace run, not just newlines: normalized query text
+	// carries runs of spaces that misalign a tabwriter column. Truncate by rune
+	// so a multi-byte character is never split into invalid UTF-8.
+	s = strings.Join(strings.Fields(s), " ")
+	r := []rune(s)
+	if len(r) <= n {
 		return s
 	}
-	return s[:n-1] + "…"
+	if n < 1 {
+		return "…"
+	}
+	return string(r[:n-1]) + "…"
 }
 
 func humanBytes2(v float64) string { return humanBytes(int64(v)) }

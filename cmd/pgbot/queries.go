@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -119,9 +120,18 @@ func humanCount(n int64) string {
 	}
 }
 
+// truncStr collapses every run of whitespace (normalized query text is
+// multi-line and would break a tabwriter row) to a single space, then truncates
+// to n runes — slicing bytes could split a multi-byte rune and emit invalid
+// UTF-8.
 func truncStr(s string, n int) string {
-	if len(s) <= n {
+	s = strings.Join(strings.Fields(s), " ")
+	r := []rune(s)
+	if len(r) <= n {
 		return s
 	}
-	return s[:n-1] + "…"
+	if n < 1 {
+		return "…"
+	}
+	return string(r[:n-1]) + "…"
 }

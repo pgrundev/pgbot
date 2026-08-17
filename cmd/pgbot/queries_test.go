@@ -57,4 +57,16 @@ func TestTruncStr(t *testing.T) {
 	if got[len(got)-len("…"):] != "…" {
 		t.Errorf("truncated string should end with ellipsis, got %q", got)
 	}
+	// normalized query text is multi-line with runs of spaces: collapse to one
+	// space so it never breaks a tabwriter row.
+	if got := truncStr("SELECT\n    l.city,\n    l.country", 18); got != "SELECT l.city, l.…" {
+		t.Errorf("whitespace not collapsed: %q", got)
+	}
+	// truncation is rune-safe: café's é is 2 bytes; a byte slice would corrupt it.
+	if got := truncStr("café society", 5); got != "café…" {
+		t.Errorf("rune-safe truncation failed: %q", got)
+	}
+	if got := truncStr("abc", 1); got != "…" {
+		t.Errorf("n<1 edge: %q", got)
+	}
 }
