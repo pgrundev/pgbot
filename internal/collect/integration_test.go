@@ -102,6 +102,25 @@ func TestIntegration_fullPipeline(t *testing.T) {
 		t.Error("horizon section missing exactness label")
 	}
 
+	// Self-observation gates: pgbot's own sessions and session pins must not
+	// leak into what it reports about the database.
+	if c.Activity != nil {
+		if c.Activity.IdleInTransaction != 0 && os.Getenv("PGBOT_TEST_LOAD") == "" {
+			t.Errorf("idle_in_transaction = %d on an idle test database — pgbot is counting its own pool", c.Activity.IdleInTransaction)
+		}
+	}
+	if c.Settings != nil {
+		for _, pin := range []string{"statement_timeout", "lock_timeout", "idle_in_transaction_session_timeout",
+			"default_transaction_read_only", "stats_fetch_consistency", "application_name"} {
+			if v, ok := c.Settings.Overrides[pin]; ok {
+				t.Errorf("settings.overrides reports pgbot's own session pin %s=%s as server config", pin, v)
+			}
+		}
+		if got := c.Settings.Params["statement_timeout"]; got == "15s" {
+			t.Errorf("settings.params.statement_timeout = %q — that is pgbot's session pin, not the server value", got)
+		}
+	}
+
 	// PII gate: render JSON and assert no email/uuid leaked from a fake-data table.
 	// (The caller is expected to have seeded such data; we assert the invariant
 	// regardless — scrubbing must hold, and pgss text is normalized.)

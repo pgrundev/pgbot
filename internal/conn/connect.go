@@ -87,16 +87,42 @@ func (t *Target) Close() {
 // query; the rest of the pool is still visible to it.
 const AppName = "pgbot"
 
+// sessionPins are the GUCs applySessionSetup sets on every pgbot session
+// (application_name is pinned too, but separately: it is pgbot's identity in
+// pg_stat_activity and must never be unpinned, see AppName). Anything that
+// reports server configuration must look past these — pg_settings.setting and
+// current_setting() show THIS session's pinned values, not the database's.
+var sessionPins = []struct{ name, value string }{
+	{"statement_timeout", "'15s'"},
+	{"lock_timeout", "'2s'"},
+	{"idle_in_transaction_session_timeout", "'10s'"},
+	{"default_transaction_read_only", "on"},
+}
+
+// UnpinLocal reverts pgbot's session pins for the current transaction only
+// (SET LOCAL … = DEFAULT restores the value the session would have without our
+// SET — the server / database / role setting). COMMIT re-establishes the pins,
+// so callers get one transaction in which pg_settings and current_setting()
+// describe the database instead of pgbot. Only the settings collector needs it.
+// stats_fetch_consistency (PG15+, also pinned) is deliberately left alone: it is
+// not a tuning parameter, and a SET LOCAL of an unknown GUC would abort the
+// transaction on PG < 15.
+func UnpinLocal(ctx context.Context, tx pgx.Tx) error {
+	for _, p := range sessionPins {
+		if _, err := tx.Exec(ctx, "SET LOCAL "+p.name+" = DEFAULT"); err != nil {
+			return fmt.Errorf("unpin %s: %w", p.name, err)
+		}
+	}
+	return nil
+}
+
 // applySessionSetup pins every physical connection. statement_timeout and
 // lock_timeout are mandatory: pgbot must never become the incident it was
 // invoked to diagnose.
 func applySessionSetup(ctx context.Context, c *pgx.Conn, caps Capabilities) error {
-	stmts := []string{
-		"SET application_name = '" + AppName + "'",
-		"SET statement_timeout = '15s'",
-		"SET lock_timeout = '2s'",
-		"SET idle_in_transaction_session_timeout = '10s'",
-		"SET default_transaction_read_only = on",
+	stmts := []string{"SET application_name = '" + AppName + "'"}
+	for _, p := range sessionPins {
+		stmts = append(stmts, "SET "+p.name+" = "+p.value)
 	}
 	for _, s := range stmts {
 		if _, err := c.Exec(ctx, s); err != nil {
