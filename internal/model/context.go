@@ -346,7 +346,8 @@ type TableStat struct {
 // Indexes is pg_stat_user_indexes.
 type Indexes struct {
 	Section
-	Total        int              `json:"total"`
+	Total        int              `json:"total"`   // all user indexes
+	Scanned      int              `json:"scanned"` // how many (largest-first) were examined for the unused/largest lists
 	Unused       []IndexStat      `json:"unused,omitempty"`
 	Largest      []IndexStat      `json:"largest,omitempty"`
 	Redundant    []RedundantIndex `json:"redundant,omitempty"`

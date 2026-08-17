@@ -61,6 +61,7 @@ type indexesSample struct {
 	Rows      []indexRow
 	Redundant []redundantRow
 	FKs       []fkRow
+	Total     int // count of ALL user indexes, not just the scanned window
 }
 
 func (indexesCollector) Sample(ctx context.Context, t *conn.Target, _ conn.Capabilities) (any, error) {
@@ -69,6 +70,10 @@ func (indexesCollector) Sample(ctx context.Context, t *conn.Target, _ conn.Capab
 		return nil, err
 	}
 	out := indexesSample{Rows: rows}
+	// indexes.sql is LIMIT 200 (the largest, for the list). Total is the real
+	// user-index count so the report says "398 total" not "200 total"; anything
+	// unused below the 200-largest cut is small and out of scope for the finding.
+	out.Total, _ = scalar[int](ctx, t, `SELECT count(*)::int FROM pg_stat_user_indexes`)
 	// Redundant-index and unindexed-FK detection are pure catalog reads; a failure
 	// in either must not sink the whole indexes section (it degrades to no list).
 	out.Redundant, _ = queryMany[redundantRow](ctx, t, sqlRedundantIndexes)
@@ -83,7 +88,11 @@ func (indexesCollector) Assemble(c *model.Context, _ conn.Capabilities, s sample
 		return
 	}
 	rows := sm.Rows
-	idx := &model.Indexes{Section: model.Section{Exactness: model.ExactnessScraped}, Total: len(rows)}
+	total := sm.Total
+	if total == 0 {
+		total = len(rows) // count query failed — fall back to what we scanned
+	}
+	idx := &model.Indexes{Section: model.Section{Exactness: model.ExactnessScraped}, Total: total, Scanned: len(rows)}
 	for _, r := range sm.Redundant {
 		idx.Redundant = append(idx.Redundant, model.RedundantIndex{
 			Schema: r.Schema, Table: r.Table, Name: r.Redundant, CoveredBy: r.Covering, Bytes: r.Bytes,

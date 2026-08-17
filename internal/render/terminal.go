@@ -524,7 +524,13 @@ func renderIndexes(b *strings.Builder, st styler, c *model.Context) {
 	for _, ix := range c.Indexes.Unused {
 		unusedBytes += ix.Bytes
 	}
-	fmt.Fprintf(b, "  %d total · %s unused (%s)\n", c.Indexes.Total, humanNum(float64(len(c.Indexes.Unused))), humanBytes(unusedBytes))
+	scannedNote := ""
+	if c.Indexes.Scanned > 0 && c.Indexes.Scanned < c.Indexes.Total {
+		// The unused/largest lists come from the largest N; smaller unused indexes
+		// below that cut are not counted. Say so rather than imply "unused" is total.
+		scannedNote = fmt.Sprintf(" · largest %d examined", c.Indexes.Scanned)
+	}
+	fmt.Fprintf(b, "  %d total · %s unused in the largest examined (%s)%s\n", c.Indexes.Total, humanNum(float64(len(c.Indexes.Unused))), humanBytes(unusedBytes), scannedNote)
 	fmt.Fprintln(b)
 }
 
