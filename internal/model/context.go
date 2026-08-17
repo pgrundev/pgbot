@@ -102,6 +102,11 @@ type WaitProfile struct {
 	ByQuery       []QueryWaits `json:"by_query,omitempty"` // per query_id attribution (PG14+)
 }
 
+// WaitSamplerDisabledReason is the Reason set when the operator turned the
+// sampler off (--ash-hz 0) — the one unavailable state the report need not
+// explain, as opposed to a sampler that ran and failed.
+const WaitSamplerDisabledReason = "sampler disabled (--ash-hz 0)"
+
 // Thin marks a profile too sparse to read as a percentage breakdown.
 func (w *WaitProfile) Thin() bool { return w != nil && w.Samples < WaitMinSamples }
 

@@ -360,8 +360,15 @@ func renderActivity(b *strings.Builder, st styler, c *model.Context) {
 // indicative, never dressed up as a confident percentage breakdown.
 func renderWaits(b *strings.Builder, st styler, c *model.Context) {
 	w := c.WaitProfile
-	if w == nil || !w.Available {
-		return // disabled (--ash-hz 0) or sampler failed: say nothing here
+	if w == nil || (!w.Available && w.Reason == model.WaitSamplerDisabledReason) {
+		return // operator turned it off: nothing to explain
+	}
+	if !w.Available {
+		// The sampler ran and produced nothing usable. Say so — silently omitting
+		// the section reads as "nothing to report", which is a different claim.
+		fmt.Fprintf(b, "%s  %s\n\n", st.head("WHERE TIME WENT"),
+			st.dim("unavailable — "+w.Reason+" (raise --window, or lower --ash-hz on a high-latency link)"))
+		return
 	}
 	if w.Samples == 0 {
 		fmt.Fprintf(b, "%s  %s\n\n", st.head("WHERE TIME WENT"),

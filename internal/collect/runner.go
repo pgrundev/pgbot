@@ -137,7 +137,7 @@ func Run(ctx context.Context, t *conn.Target, opts Options) (*model.Context, err
 		<-ashDone
 		out.WaitProfile = profileFrom(ash, queryTexts(out))
 	} else {
-		out.WaitProfile = &model.WaitProfile{Available: false, Reason: "sampler disabled (--ash-hz 0)"}
+		out.WaitProfile = &model.WaitProfile{Available: false, Reason: model.WaitSamplerDisabledReason}
 	}
 	return out, nil
 }
