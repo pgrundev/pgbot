@@ -27,7 +27,7 @@ type providerMarkers struct {
 	HasRDS      bool // a pg_settings row named rds.*
 	HasCloudSQL bool // cloudsql.*
 	HasAzure    bool // azure.*
-	IsAurora    bool // aurora_version() resolved
+	IsAurora    bool // aurora_version() exists in pg_proc
 }
 
 func detectProvider(m providerMarkers) Provider {
