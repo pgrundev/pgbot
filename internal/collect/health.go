@@ -32,7 +32,11 @@ type healthSample struct {
 	StatsReset   *time.Time `db:"stats_reset"`
 }
 
-func (healthCollector) Name() string                     { return "health" }
+// healthName is the registry name the runner uses to sequence this collector
+// around the sample window (see Run).
+const healthName = "health"
+
+func (healthCollector) Name() string                     { return healthName }
 func (healthCollector) Kind() Kind                       { return KindCounter }
 func (healthCollector) Available(conn.Capabilities) bool { return true }
 
@@ -56,10 +60,17 @@ func (healthCollector) Assemble(c *model.Context, _ conn.Capabilities, s sampled
 		}
 		return v
 	}
-	h.TPS = mark(rate.PerSecond(a.XactCommit+a.XactRollback, b.XactCommit+b.XactRollback, dt))
-	h.CommitsPerSec = mark(rate.PerSecond(a.XactCommit, b.XactCommit, dt))
+	// pgbot's own commits inside the window (the wait sampler's polls) are not
+	// the database's throughput: take them off sample B's commit counter before
+	// computing rates. Clamped so a reset (b < a) is still detected as such.
+	commitsB := b.XactCommit
+	if own := s.OwnTxns; own > 0 && commitsB-own >= a.XactCommit {
+		commitsB -= own
+	}
+	h.TPS = mark(rate.PerSecond(a.XactCommit+a.XactRollback, commitsB+b.XactRollback, dt))
+	h.CommitsPerSec = mark(rate.PerSecond(a.XactCommit, commitsB, dt))
 	h.RollbacksPerSec = mark(rate.PerSecond(a.XactRollback, b.XactRollback, dt))
-	if rr, ok := rate.Ratio(a.XactRollback, b.XactRollback, a.XactCommit, b.XactCommit); ok {
+	if rr, ok := rate.Ratio(a.XactRollback, b.XactRollback, a.XactCommit, commitsB); ok {
 		h.RollbackRatio = round4p(rr)
 	}
 	if chr, ok := rate.Ratio(a.BlksHit, b.BlksHit, a.BlksRead, b.BlksRead); ok {

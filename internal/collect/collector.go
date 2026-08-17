@@ -56,6 +56,10 @@ type sampled struct {
 	A   any
 	B   any
 	Err error
+	// OwnTxns is how many transactions pgbot itself committed inside the sample
+	// window [A, B] — the wait sampler's successful polls. Only the health
+	// collector receives it, and subtracts it from the commit delta.
+	OwnTxns int64
 }
 
 // Collector reads one diagnostic domain and writes its section into the Context.
