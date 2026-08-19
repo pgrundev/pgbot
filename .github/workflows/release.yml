@@ -21,7 +21,7 @@ jobs:
           go-version-file: go.mod
       - uses: sigstore/cosign-installer@v3
       - uses: anchore/sbom-action/download-syft@v0 # goreleaser's sboms block uses syft
-      - uses: docker/setup-qemu-action@v3 # emulation for the linux/arm64 image build
+      - uses: docker/setup-qemu-action@v4 # emulation for the linux/arm64 image build
       - uses: docker/setup-buildx-action@v4 # goreleaser's docker build uses buildx
       # Log in so goreleaser can push the ghcr.io image; without this the docker
       # step fails and takes the whole release (tarballs included) down with it.
