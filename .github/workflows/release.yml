@@ -21,7 +21,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       # syft: goreleaser's sboms block. qemu: emulation for the linux/arm64
       # image build. buildx: goreleaser's docker build. (Prose stays off the
       # version comments — dependabot only rewrites a trailing "# vX.Y.Z".)
@@ -164,7 +164,7 @@ jobs:
     name: published signature verifies
     runs-on: ubuntu-latest
     steps:
-      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: cosign verify-blob --bundle
         run: |
           VERSION="${GITHUB_REF_NAME}"
