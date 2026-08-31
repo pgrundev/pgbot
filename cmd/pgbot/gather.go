@@ -30,7 +30,11 @@ func gather(ctx context.Context, connString string, f inspectFlags) (*model.Cont
 		fmt.Fprintln(os.Stderr, target.Pooler.Note())
 	}
 
-	c, err := collect.Run(ctx, target, collect.Options{Interval: f.interval, ASHHz: f.ashHz, ASHWindow: f.window})
+	// Deadline must be forwarded: without it collect.Run falls back to its own
+	// 20s+interval budget and every --timeout on the commands routed through
+	// gather (vacuum, tables, indexes, queries, ask) is silently ignored — the
+	// exact flag whose help text says to raise it for slow or remote databases.
+	c, err := collect.Run(ctx, target, collect.Options{Interval: f.interval, ASHHz: f.ashHz, ASHWindow: f.window, Deadline: f.timeout})
 	if err != nil {
 		return nil, "", fmt.Errorf("collect: %s", conn.RedactConnString(err.Error()))
 	}
