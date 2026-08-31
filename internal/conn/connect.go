@@ -56,6 +56,15 @@ func ConnectDB(ctx context.Context, connString, database string) (*Target, error
 	cfg.MaxConnLifetime = 5 * time.Minute
 	cfg.ConnConfig.RuntimeParams["application_name"] = "pgbot"
 
+	// Route the TCP leg through the SSH jump host when one is configured. This has
+	// to happen before probe(): the probe connection dials too, and it must take
+	// the same path as the pool. Installing it here rather than rewriting the DSN
+	// to a local forward is what keeps sslmode= and .pgpass matching on the real
+	// hostname — see sshtunnel.go.
+	if dial := sshDialFunc(); dial != nil {
+		cfg.ConnConfig.DialFunc = dial
+	}
+
 	// Drop client-only params pgx forwarded into RuntimeParams (it would send them
 	// as server GUCs, which the server rejects). See clientOnlyParams.
 	for _, p := range clientOnlyParams {
