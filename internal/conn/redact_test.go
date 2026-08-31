@@ -132,6 +132,34 @@ func TestScrubQueryText_keepsShape(t *testing.T) {
 	}
 }
 
+func TestScrubRedactableText_removesCockroachUnsafeMarkers(t *testing.T) {
+	in := `duplicate key value ‹alice-secret-value› violates constraint ‹users_email_key› for id 42`
+	out := ScrubRedactableText(in)
+	for _, secret := range []string{"alice-secret-value", "users_email_key", "42", "‹", "›"} {
+		if strings.Contains(out, secret) {
+			t.Errorf("CockroachDB redactable fragment %q leaked: %q", secret, out)
+		}
+	}
+	if !strings.Contains(out, "duplicate key value") {
+		t.Errorf("safe error shape was lost: %q", out)
+	}
+}
+
+func TestScrubDiagnosticTextRemovesRangeKeysURIsAndTokens(t *testing.T) {
+	in := `replica unavailable for /Table/53/1/"dir_30/file_97.txt" hash a6ae387c3837363aaf3b17bd6bda93df40979abc sink s3://bucket/private/path?AWS_SECRET_ACCESS_KEY=hunter2 token=abcd`
+	out := ScrubDiagnosticText(in)
+	for _, secret := range []string{"dir_30", "file_97", "a6ae387", "bucket/private", "hunter2", "abcd"} {
+		if strings.Contains(out, secret) {
+			t.Errorf("diagnostic value %q leaked: %q", secret, out)
+		}
+	}
+	for _, shape := range []string{"replica unavailable", "/Table/"} {
+		if !strings.Contains(out, shape) {
+			t.Errorf("diagnostic shape %q was lost: %q", shape, out)
+		}
+	}
+}
+
 func TestRedactConnString(t *testing.T) {
 	cases := map[string]string{
 		"postgres://user:s3cr3t@host:5432/db":        "s3cr3t",

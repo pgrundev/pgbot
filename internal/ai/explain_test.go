@@ -80,3 +80,37 @@ func TestBuildExplainPrompt_noRawQueryText(t *testing.T) {
 		t.Error("payload must never contain raw query text or secrets")
 	}
 }
+
+func TestBuildExplainPromptCockroachDB(t *testing.T) {
+	qps := 13_800.0
+	c := &model.Context{
+		Server: model.ServerInfo{Engine: "cockroachdb", Database: "defaultdb", VersionText: "CockroachDB CCL v26.4.0"},
+		Health: &model.Health{Cockroach: &model.CockroachHealth{
+			AdminAPI: model.Section{Exactness: model.ExactnessScraped}, Prometheus: model.Section{Exactness: model.ExactnessSampled},
+			NodesTotal: 6, NodesLive: 6, StoresTotal: 24, CapacityBytes: 8 << 40, AvailableBytes: 3 << 40,
+			MaxStoreUsedRatio: .602, MaxCPUPercent: 66.8, SQLConnections: 713, QueriesPerSec: &qps,
+			Nodes:        []model.CockroachNodeHealth{{NodeID: 1, Locality: "secret-locality", SQLConnections: 713}},
+			Distribution: model.CockroachDistribution{Section: model.Section{Exactness: model.ExactnessScraped}, LiveStores: 24, ComparableStores: 24, ReplicaMin: 1600, ReplicaMax: 1750},
+			Storage:      model.CockroachStorage{Section: model.Section{Exactness: model.ExactnessSampled}, MVCCGarbageBytes: 1 << 40, UninitializedReplicas: 2200, RaftCommandsPending: 47},
+		}},
+		Activity: &model.Activity{Section: model.Section{Exactness: model.ExactnessScraped}, Total: 713, Active: 42},
+		Queries:  &model.Queries{Section: model.Section{Exactness: model.ExactnessScraped}, StatsSource: "activity_cache", WindowHours: 24, Top: []model.QueryStat{{Query: "SELECT secret_live_query"}}},
+		Cockroach: &model.CockroachDB{
+			LiveQueries: model.CockroachLiveQueries{Items: []model.CockroachLiveQuery{{User: "secret-user", AppName: "secret-app", Query: "SELECT secret_live_query"}}},
+			Contention:  model.CockroachContention{Section: model.Section{Exactness: model.ExactnessScraped}, WindowMinutes: 60, TotalEvents: 12, TotalWaitMS: 3456},
+		},
+	}
+
+	system, user := BuildExplainPrompt(c)
+	combined := system + user
+	for _, want := range []string{"This report is for CockroachDB", "PostgreSQL-only", `"engine": "cockroachdb"`, `"nodes_live": 6`, `"uninitialized_replicas": 2200`, `"contention_events": 12`} {
+		if !strings.Contains(combined, want) {
+			t.Errorf("CockroachDB prompt missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"senior PostgreSQL expert", "secret-locality", "secret-user", "secret-app", "secret_live_query"} {
+		if strings.Contains(combined, forbidden) {
+			t.Errorf("CockroachDB prompt leaked or retained %q", forbidden)
+		}
+	}
+}

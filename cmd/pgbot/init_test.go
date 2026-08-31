@@ -68,6 +68,22 @@ func TestInitSQLProviderPgss(t *testing.T) {
 	}
 }
 
+func TestInitSQLCockroachDB(t *testing.T) {
+	sql := initSQLForEngine("pgbot_ro", "defaultdb", conn.ProviderUnknown, conn.EngineCockroachDB)
+	for _, want := range []string{
+		"GRANT CONNECT ON DATABASE defaultdb TO pgbot_ro;",
+		"GRANT SYSTEM VIEWACTIVITY TO pgbot_ro;",
+		"@HOST:26257/defaultdb",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("CockroachDB init SQL missing %q\n---\n%s", want, sql)
+		}
+	}
+	if strings.Contains(sql, "pg_monitor") || strings.Contains(sql, "pg_stat_statements") {
+		t.Errorf("CockroachDB init SQL must not contain PostgreSQL-only setup\n---\n%s", sql)
+	}
+}
+
 // The whole point of generate-don't-execute: `pgbot init | psql "$ADMIN_DSN"`
 // must be safe. Every line is blank, a comment, or one of the known statements.
 func TestInitSQLPipeSafe(t *testing.T) {
@@ -165,5 +181,16 @@ func TestInitVerifyReportStandby(t *testing.T) {
 	joined := strings.Join(lines, "\n")
 	if !strings.Contains(joined, "standby") {
 		t.Errorf("verify report should note the standby (per-node counters caveat):\n%s", joined)
+	}
+}
+
+func TestInitVerifyReportCockroachDB(t *testing.T) {
+	lines, critical := initVerifyReport(conn.Capabilities{
+		Engine: conn.EngineCockroachDB, VersionText: "CockroachDB CCL v26.4.0",
+		Database: "defaultdb", HasViewActivity: true, HasCRDBStmtStats: true, HasCRDBInsights: true,
+	})
+	joined := strings.Join(lines, "\n")
+	if critical || !strings.Contains(joined, "VIEWACTIVITY") || !strings.Contains(joined, "statement statistics") || !strings.Contains(joined, "execution insights") {
+		t.Fatalf("CockroachDB activity privilege should verify: critical=%v\n%s", critical, strings.Join(lines, "\n"))
 	}
 }

@@ -180,9 +180,9 @@ func applySessionSetup(ctx context.Context, c *pgx.Conn, caps Capabilities) erro
 	return nil
 }
 
-// probe reads server_version_num, installed extensions, role membership, and
-// the system identifier in one round trip (with a best-effort fallback for the
-// identifier, which needs elevated read access on some managed providers).
+// probe first identifies the SQL engine, then runs only that engine's supported
+// capability checks. CockroachDB speaks pgwire and advertises a PostgreSQL
+// compatibility version, but PostgreSQL catalog probes are not portable to it.
 func probe(ctx context.Context, cc *pgx.ConnConfig) (Capabilities, PoolerInfo, error) {
 	c, err := pgx.ConnectConfig(ctx, cc)
 	if err != nil {
@@ -190,21 +190,56 @@ func probe(ctx context.Context, cc *pgx.ConnConfig) (Capabilities, PoolerInfo, e
 	}
 	defer c.Close(ctx)
 
-	// Detect the pooler first — if prepared statements are broken, every later
+	// Identify CockroachDB using the simple protocol before the pooler probes.
+	// PgDog detection deliberately writes a PostgreSQL placeholder GUC; on
+	// CockroachDB that is an error and would manufacture a failed-execution
+	// insight on every pgbot run.
+	var initialVersion string
+	if err := c.QueryRow(ctx, `SELECT version()`, pgx.QueryExecModeSimpleProtocol).Scan(&initialVersion); err != nil {
+		return Capabilities{}, PoolerInfo{}, fmt.Errorf("probe server version: %w", err)
+	}
+	engine := detectEngine(initialVersion)
+
+	// Detect the pooler next — if prepared statements are broken, every later
 	// query on this probe connection must use the simple protocol too.
-	pooler := detectPooler(ctx, c, cc)
+	pooler := detectPoolerForEngine(ctx, c, cc, engine)
 	mode := []any{}
 	if pooler.SimpleProtocol {
 		mode = []any{pgx.QueryExecModeSimpleProtocol}
 	}
 
 	var caps Capabilities
+	err = c.QueryRow(ctx, `SELECT current_setting('server_version_num')::int, version(), current_database()`, mode...).
+		Scan(&caps.VersionNum, &caps.VersionText, &caps.Database)
+	if err != nil {
+		return Capabilities{}, pooler, fmt.Errorf("probe server identity: %w", err)
+	}
+	caps.Engine = engine
+	if caps.IsCockroachDB() {
+		// Either privilege provides cluster-wide activity visibility; the redacted
+		// variant is sufficient and causes CockroachDB to redact query text.
+		_ = c.QueryRow(ctx, `SELECT has_system_privilege(current_user, 'VIEWACTIVITY') OR
+			has_system_privilege(current_user, 'VIEWACTIVITYREDACTED')`, mode...).Scan(&caps.HasViewActivity)
+		_ = c.QueryRow(ctx, `SELECT
+			EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'information_schema' AND table_name = 'crdb_statement_statistics'),
+			coalesce(current_setting('allow_unsafe_internals', true), 'off')::BOOL AND
+				EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'crdb_internal' AND table_name = 'statement_activity'),
+			EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'information_schema' AND table_name = 'crdb_statement_execution_insights') AND
+			EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'information_schema' AND table_name = 'crdb_transaction_execution_insights'),
+			EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'information_schema' AND table_name = 'crdb_jobs_with_progress'),
+			EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'crdb_internal' AND table_name = 'transaction_contention_events'),
+			to_regclass('system.statements') IS NOT NULL,
+			EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'crdb_internal' AND table_name = 'index_usage_statistics') AND
+				EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'crdb_internal' AND table_name = 'table_indexes'),
+			EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'crdb_internal' AND table_name = 'index_usage_statistics' AND column_name = 'total_writes')`, mode...).
+			Scan(&caps.HasCRDBStmtStats, &caps.HasCRDBStmtActivity, &caps.HasCRDBInsights, &caps.HasCRDBJobs, &caps.HasCRDBContention, &caps.HasCRDBStatementStore, &caps.HasCRDBIndexUsage, &caps.HasCRDBIndexWrites)
+		caps.Provider = ProviderUnknown
+		return caps, pooler, nil
+	}
+
 	var mk providerMarkers
 	const q = `
-		SELECT current_setting('server_version_num')::int,
-		       version(),
-		       current_database(),
-		       pg_postmaster_start_time(),
+		SELECT pg_postmaster_start_time(),
 		       (SELECT count(*) FROM pg_extension WHERE extname = 'pg_stat_statements') > 0,
 		       (SELECT count(*) FROM pg_extension WHERE extname = 'hypopg') > 0,
 		       pg_has_role(current_user, 'pg_monitor', 'MEMBER'),
@@ -217,8 +252,7 @@ func probe(ctx context.Context, cc *pgx.ConnConfig) (Capabilities, PoolerInfo, e
 		       -- an ERROR to the server log and books a rollback in pg_stat_database
 		       -- on each pgbot run — the very counter pgbot reports.
 		       (SELECT count(*) FROM pg_proc WHERE proname = 'aurora_version') > 0`
-	err = c.QueryRow(ctx, q, mode...).Scan(&caps.VersionNum, &caps.VersionText, &caps.Database,
-		&caps.StartedAt, &caps.HasStatStatements, &caps.HasHypopg, &caps.HasPgMonitor,
+	err = c.QueryRow(ctx, q, mode...).Scan(&caps.StartedAt, &caps.HasStatStatements, &caps.HasHypopg, &caps.HasPgMonitor,
 		&mk.HasRDS, &mk.HasCloudSQL, &mk.HasAzure, &caps.InRecovery, &mk.IsAurora)
 	if err != nil {
 		return Capabilities{}, pooler, fmt.Errorf("probe capabilities: %w", err)

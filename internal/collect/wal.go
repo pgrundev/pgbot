@@ -56,6 +56,10 @@ func (walCollector) Sample(ctx context.Context, t *conn.Target, _ conn.Capabilit
 }
 
 func (walCollector) Assemble(c *model.Context, caps conn.Capabilities, s sampled, dt time.Duration, _ Options) {
+	if caps.IsCockroachDB() {
+		c.WAL = &model.WAL{Section: unavail(errUnsupportedOnCockroach, "")}
+		return
+	}
 	if !caps.HasStatWAL() {
 		c.WAL = &model.WAL{Section: model.Section{Exactness: model.ExactnessUnavailable, Reason: "pg_stat_wal requires PostgreSQL 14+"}}
 		return

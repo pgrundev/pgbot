@@ -55,6 +55,10 @@ func (healthCollector) Sample(ctx context.Context, t *conn.Target, _ conn.Capabi
 }
 
 func (healthCollector) Assemble(c *model.Context, _ conn.Capabilities, s sampled, dt time.Duration, _ Options) {
+	if c.Server.Engine == string(conn.EngineCockroachDB) {
+		assembleCockroachHealth(c, s, dt)
+		return
+	}
 	a, aok := s.A.(healthSample)
 	b, bok := s.B.(healthSample)
 	if s.Err != nil || !aok || !bok {

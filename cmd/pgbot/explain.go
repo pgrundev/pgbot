@@ -26,12 +26,13 @@ func newExplainCmd() *cobra.Command {
 		Use:   "explain <connection-string>",
 		Short: "Inspect, then have an AI explain the findings in plain language",
 		Long: "Runs the same read-only inspection as `pgbot inspect`, prints the deterministic\n" +
-			"report, then sends the PII-free findings to an AI provider for a plain-language\n" +
+			"report, then sends a compact PII-free diagnostic summary to an AI provider for a\n" +
+			"plain-language\n" +
 			"explanation. The findings are still computed locally in Go — the model only\n" +
 			"explains them, never invents them.\n\n" +
 			"The key is read from $OPENAI_API_KEY (OpenAI) or $GEMINI_API_KEY (Google Gemini),\n" +
-			"never a flag; set PGBOT_AI_PROVIDER to force one. This is the only pgbot command\n" +
-			"that sends data off the machine; the payload is the same PII-free Context you can\n" +
+			"never a flag; set PGBOT_AI_PROVIDER to force one. The payload is a compact subset\n" +
+			"of the PII-free Context you can\n" +
 			"inspect with `pgbot inspect --json`.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -46,10 +47,13 @@ func newExplainCmd() *cobra.Command {
 	fl.BoolVar(&f.strictPooler, "strict-pooler", false, "refuse (exit 3) if connected through a transaction pooler")
 	fl.IntVar(&f.ashHz, "ash-hz", 10, "active-session sampling rate in Hz (0 disables the wait-event profile)")
 	fl.DurationVar(&f.window, "window", 5*time.Second, "active-session sampling window")
+	fl.DurationVar(&f.timeout, "timeout", 45*time.Second, "wall-clock budget for database collection")
 	fl.BoolVar(&yes, "yes", false, "skip the 'this sends data to the AI provider' confirmation prompt")
 	fl.StringVar(&f.config, "config", "", "path to .pgbot.toml (default: discover from cwd upward)")
 	fl.StringArrayVar(&f.ignore, "ignore", nil, "suppress a finding for this run: finding[:object] (repeatable)")
 	fl.StringVar(&f.failOn, "fail-on", "warn", "exit non-zero on findings at/above this severity: critical|warn|info|none")
+	fl.StringVar(&f.crdbAdminURL, "crdb-admin-url", "", "CockroachDB DB Console/Admin API origin (or PGBOT_CRDB_ADMIN_URL)")
+	fl.StringVar(&f.crdbPromURL, "crdb-prometheus-url", "", "CockroachDB Prometheus origin or /_status/load URL (defaults to admin URL)")
 	return cmd
 }
 
@@ -66,7 +70,7 @@ func runExplain(cmd *cobra.Command, args []string, f inspectFlags, yes bool) err
 
 	// This is the one command that sends data off the box. Say so, loudly, and
 	// require an explicit go-ahead unless --yes (or non-interactive).
-	fmt.Fprintf(os.Stderr, "pgbot explain: this sends the PII-free findings (same as `inspect --json`) to %s (model %s).\n", client.Vendor(), client.ModelName())
+	fmt.Fprintf(os.Stderr, "pgbot explain: this sends a compact PII-free diagnostic summary to %s (model %s).\n", client.Vendor(), client.ModelName())
 	if !yes && isInteractive() {
 		fmt.Fprint(os.Stderr, "Continue? [y/N] ")
 		var resp string
@@ -81,14 +85,19 @@ func runExplain(cmd *cobra.Command, args []string, f inspectFlags, yes bool) err
 		return fmt.Errorf("no connection string (pass one or set $DATABASE_URL)")
 	}
 
-	ctx, cancel := context.WithTimeout(cmd.Context(), 45*time.Second)
-	defer cancel()
+	collectCtx, cancelCollect := context.WithTimeout(cmd.Context(), f.timeout)
+	defer cancelCollect()
 
-	target, err := conn.Connect(ctx, connString)
+	target, err := conn.Connect(collectCtx, connString)
 	if err != nil {
 		return fmt.Errorf("connect: %s", conn.RedactConnString(err.Error()))
 	}
 	defer target.Close()
+	httpClient, err := newCockroachHTTP(connString, target.Caps, f)
+	if err != nil {
+		return err
+	}
+	defer closeCockroachHTTP(httpClient)
 
 	if target.Pooler.Detected {
 		if f.strictPooler {
@@ -99,7 +108,10 @@ func runExplain(cmd *cobra.Command, args []string, f inspectFlags, yes bool) err
 	}
 
 	// Never keep raw query text here — the payload leaves the machine.
-	c, err := collect.Run(ctx, target, collect.Options{Interval: f.interval, ASHHz: f.ashHz, ASHWindow: f.window})
+	c, err := collect.Run(collectCtx, target, collect.Options{
+		Interval: f.interval, ASHHz: f.ashHz, ASHWindow: f.window,
+		Deadline: f.timeout, CockroachHTTP: httpClient,
+	})
 	if err != nil {
 		return fmt.Errorf("collect: %s", conn.RedactConnString(err.Error()))
 	}
@@ -115,6 +127,7 @@ func runExplain(cmd *cobra.Command, args []string, f inspectFlags, yes bool) err
 	if err := computeFindings(c, f); err != nil {
 		return err
 	}
+	cancelCollect()
 
 	// 1. The deterministic report — the truth, printed exactly as `inspect` would.
 	color := useColor(f.noColor)
@@ -126,7 +139,9 @@ func runExplain(cmd *cobra.Command, args []string, f inspectFlags, yes bool) err
 	// 2. The AI explanation — clearly labeled as model-generated. If it fails, the
 	// deterministic report above still stands; we just note the explanation is
 	// unavailable and exit on the findings' code.
-	explanation, aiErr := ai.Explain(ctx, client, c)
+	aiCtx, cancelAI := context.WithTimeout(cmd.Context(), 60*time.Second)
+	defer cancelAI()
+	explanation, aiErr := ai.Explain(aiCtx, client, c)
 	printAISection(color, client.ModelName(), explanation, aiErr)
 	// The destructive-action guards, reasserted by code AFTER the model text — so a
 	// reworded or truncated explanation can never be the thing that drops them.
@@ -134,6 +149,7 @@ func runExplain(cmd *cobra.Command, args []string, f inspectFlags, yes bool) err
 		printSafetyFooter(color, c)
 	}
 
+	closeCockroachHTTP(httpClient)
 	os.Exit(exitCode(c.Findings, f.failOn))
 	return nil
 }

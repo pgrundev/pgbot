@@ -6,10 +6,12 @@ package collect
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/pgrundev/pgbot/internal/conn"
+	"github.com/pgrundev/pgbot/internal/crdbhttp"
 	"github.com/pgrundev/pgbot/internal/model"
 )
 
@@ -23,12 +25,13 @@ const (
 
 // Options tune a collection run.
 type Options struct {
-	Interval     time.Duration // gap between the two counter samples (default 1s, min 500ms)
-	Deadline     time.Duration // hard cap on total wall time (default 5s + interval)
-	RawQueryText bool          // keep raw pg_stat_activity query text (default: scrub — PII)
-	ASHHz        int           // wait-event poll rate in Hz (default 10; 0 disables the sampler)
-	ASHWindow    time.Duration // active-session sampling window (default 5s)
-	SchemaOnly   bool          // --profile=schema: run only schema-relevant collectors (D3-1)
+	Interval      time.Duration    // gap between the two counter samples (default 1s, min 500ms)
+	Deadline      time.Duration    // hard cap on total wall time (default 5s + interval)
+	RawQueryText  bool             // keep raw pg_stat_activity query text (default: scrub — PII)
+	ASHHz         int              // wait-event poll rate in Hz (default 10; 0 disables the sampler)
+	ASHWindow     time.Duration    // active-session sampling window (default 5s)
+	SchemaOnly    bool             // --profile=schema: run only schema-relevant collectors (D3-1)
+	CockroachHTTP *crdbhttp.Client // optional Admin/Prometheus health surfaces
 }
 
 // schemaCollectors are the collectors that can produce a schema-scoped finding.
@@ -89,6 +92,7 @@ type Collector interface {
 var registry = []Collector{
 	healthCollector{},
 	activityCollector{},
+	cockroachCollector{},
 	locksCollector{},
 	queriesCollector{},
 	tablesCollector{},
@@ -107,6 +111,33 @@ var registry = []Collector{
 	standbyCollector{},
 }
 
+// optionsSampler is implemented only by collectors whose reads need run-level
+// configuration. Keeping it optional avoids threading HTTP settings through
+// every PostgreSQL collector.
+type optionsSampler interface {
+	SampleWithOptions(context.Context, *conn.Target, conn.Capabilities, Options) (any, error)
+}
+
+func sampleCollector(ctx context.Context, c Collector, t *conn.Target, caps conn.Capabilities, opts Options) (any, error) {
+	if configured, ok := c.(optionsSampler); ok {
+		return configured.SampleWithOptions(ctx, t, caps, opts)
+	}
+	return c.Sample(ctx, t, caps)
+}
+
+var errUnsupportedOnCockroach = errors.New("collector not yet supported on CockroachDB")
+
+// collectorAvailable is the engine boundary for the incremental CockroachDB
+// port. A PostgreSQL collector must be explicitly replaced before it can run on
+// CockroachDB; pgwire compatibility alone is not evidence that its catalogs or
+// metrics have the same semantics.
+func collectorAvailable(c Collector, caps conn.Capabilities) bool {
+	if caps.IsCockroachDB() && c.Name() != "activity" && c.Name() != "queries" && c.Name() != "cockroachdb" && c.Name() != "tables" && c.Name() != "indexes" {
+		return false
+	}
+	return c.Available(caps)
+}
+
 func nowUTC() time.Time { return time.Now().UTC() }
 
 // unavail builds an unavailable Section, using a (redacted) error as the reason
@@ -122,14 +153,16 @@ func unavail(err error, fallback string) model.Section {
 // newContext seeds the server/window/findings shell that collectors fill in.
 func newContext(caps conn.Capabilities, tB time.Time, dt time.Duration) *model.Context {
 	srv := model.ServerInfo{
-		VersionNum:   caps.VersionNum,
-		VersionText:  caps.VersionText,
-		Database:     caps.Database,
-		Provider:     string(caps.Provider),
-		InRecovery:   caps.Standby(),
-		Extensions:   caps.Extensions,
-		Capabilities: caps.Satisfied(),
-		HasPgMonitor: caps.HasPgMonitor,
+		Engine:          string(caps.EngineName()),
+		VersionNum:      caps.VersionNum,
+		VersionText:     caps.VersionText,
+		Database:        caps.Database,
+		Provider:        string(caps.Provider),
+		InRecovery:      caps.Standby(),
+		Extensions:      caps.Extensions,
+		Capabilities:    caps.Satisfied(),
+		HasPgMonitor:    caps.HasPgMonitor,
+		HasViewActivity: caps.HasViewActivity,
 	}
 	window := model.Window{SampleSeconds: round2(dt.Seconds())}
 	if !caps.StartedAt.IsZero() {

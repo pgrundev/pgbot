@@ -23,6 +23,18 @@ var (
 	reEmail        = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
 	reUUID         = regexp.MustCompile(`\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b`)
 	reNumber       = regexp.MustCompile(`\b\d+(?:\.\d+)?\b`)
+	// Diagnostic strings are not necessarily valid SQL. CockroachDB job errors,
+	// for example, can contain pretty-printed range keys in double quotes or an
+	// external-storage URI outside a SQL literal. These patterns are deliberately
+	// broader than ScrubQueryText: losing some detail is preferable to retaining
+	// a row key, credential, or sink URI in JSON.
+	reDiagnosticDoubleQuoted = regexp.MustCompile(`"(?:[^"]|"")*"`)
+	reDiagnosticURI          = regexp.MustCompile(`(?i)\b(?:https?|s3|gs|azure|nodelocal|external|kafka|webhook)://[^\s,;]+`)
+	reDiagnosticSecret       = regexp.MustCompile(`(?i)\b(?:access[_-]?key|secret|token|password|credential|signature|sig)\s*=\s*[^\s,;]+`)
+	reDiagnosticLongHex      = regexp.MustCompile(`\b[0-9a-fA-F]{16,}\b`)
+	// CockroachDB redactable strings retain unsafe values between these markers;
+	// the markers describe what a redactor must remove, not text already removed.
+	reCRDBUnsafe = regexp.MustCompile(`‹[^›]*›`)
 	// A $N placeholder (from pg_stat_statements normalization) OR a bare numeric
 	// literal. The alternation matches $N first, so the replace func sees it whole
 	// and preserves it — we scrub bare literals but must keep normalized
@@ -57,6 +69,24 @@ func ScrubQueryText(sql string) string {
 		return "?"
 	})
 	return s
+}
+
+// ScrubRedactableText removes CockroachDB's marked unsafe fragments, then
+// applies the normal query scrubber to any remaining SQL-shaped literals.
+func ScrubRedactableText(s string) string {
+	s = reCRDBUnsafe.ReplaceAllLiteralString(s, "?")
+	return ScrubQueryText(s)
+}
+
+// ScrubDiagnosticText removes values from free-form diagnostic messages. It is
+// stricter than ScrubQueryText because error/status text can embed range keys,
+// object values, or external-service URIs without SQL literal syntax.
+func ScrubDiagnosticText(s string) string {
+	s = reDiagnosticURI.ReplaceAllLiteralString(s, "<redacted-uri>")
+	s = reDiagnosticSecret.ReplaceAllLiteralString(s, "REDACTED")
+	s = reDiagnosticDoubleQuoted.ReplaceAllLiteralString(s, `"?"`)
+	s = reDiagnosticLongHex.ReplaceAllLiteralString(s, "?")
+	return ScrubRedactableText(s)
 }
 
 // RedactConnString returns a connection string safe to print in logs, errors,

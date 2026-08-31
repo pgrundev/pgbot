@@ -28,6 +28,8 @@ func newTablesCmd() *cobra.Command {
 	fl := cmd.Flags()
 	fl.BoolVar(&f.noColor, "no-color", false, "disable ANSI color")
 	fl.DurationVar(&f.timeout, "timeout", 30*time.Second, "total wall-clock budget for the run (raise it for slow or remote databases)")
+	fl.StringVar(&f.crdbAdminURL, "crdb-admin-url", "", "CockroachDB DB Console/Admin API origin (or PGBOT_CRDB_ADMIN_URL)")
+	fl.StringVar(&f.crdbPromURL, "crdb-prometheus-url", "", "CockroachDB Prometheus origin or /_status/load URL (defaults to admin URL)")
 	return cmd
 }
 
@@ -39,6 +41,7 @@ func runTables(cmd *cobra.Command, args []string, f inspectFlags) error {
 	f.ashHz = 0
 	f.noStore = true
 	f.interval = time.Second
+	f.crdbHTTP = true
 
 	ctx, cancel := context.WithTimeout(cmd.Context(), f.timeout)
 	defer cancel()
@@ -49,6 +52,11 @@ func runTables(cmd *cobra.Command, args []string, f inspectFlags) error {
 	}
 	if host == "" {
 		host = c.Server.Database
+	}
+	if c.Server.Engine == "cockroachdb" {
+		return render.CockroachScreen(os.Stdout, c, "tables", render.Options{
+			Color: useColor(f.noColor), Host: host, Width: terminalWidth(), Full: true,
+		})
 	}
 	st := render.NewStyler(useColor(f.noColor))
 

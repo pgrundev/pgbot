@@ -20,7 +20,7 @@ func Run(ctx context.Context, t *conn.Target, opts Options) (*model.Context, err
 	// with the whole two-phase counter collection, polling pg_stat_activity at
 	// ashHz for ashWindow. Stretch the counter interval to cover its window so
 	// both signals describe the same slice of wall-clock time.
-	ashOn := opts.ashHz() > 0
+	ashOn := opts.ashHz() > 0 && !t.Caps.IsCockroachDB()
 	if ashOn && opts.ashWindow() > iv {
 		iv = opts.ashWindow()
 	}
@@ -86,14 +86,18 @@ func Run(ctx context.Context, t *conn.Target, opts Options) (*model.Context, err
 		if c.Name() == healthName {
 			continue
 		}
-		if !c.Available(caps) || (opts.SchemaOnly && !schemaCollectors[c.Name()]) {
+		if !collectorAvailable(c, caps) || (opts.SchemaOnly && !schemaCollectors[c.Name()]) {
 			mu.Lock()
-			results[c.Name()] = &sampled{}
+			r := &sampled{}
+			if caps.IsCockroachDB() && c.Name() != "activity" && c.Name() != "queries" && c.Name() != "cockroachdb" && c.Name() != "tables" && c.Name() != "indexes" {
+				r.Err = errUnsupportedOnCockroach
+			}
+			results[c.Name()] = r
 			mu.Unlock()
 			continue
 		}
 		g1.Go(func() error {
-			v, err := c.Sample(gctx, t, caps)
+			v, err := sampleCollector(gctx, c, t, caps, opts)
 			mu.Lock()
 			results[c.Name()] = &sampled{A: v, Err: err}
 			mu.Unlock()
@@ -109,7 +113,7 @@ func Run(ctx context.Context, t *conn.Target, opts Options) (*model.Context, err
 	var dt time.Duration
 	health := healthCollector{}
 	if healthRuns {
-		hA, hErr := health.Sample(ctx, t, caps)
+		hA, hErr := sampleCollector(ctx, health, t, caps, opts)
 		tA = nowUTC()
 		if ashOn {
 			ashDone = make(chan struct{})
@@ -126,7 +130,7 @@ func Run(ctx context.Context, t *conn.Target, opts Options) (*model.Context, err
 		if ashOn {
 			<-ashDone
 		}
-		hB, hErrB := health.Sample(ctx, t, caps)
+		hB, hErrB := sampleCollector(ctx, health, t, caps, opts)
 		tB = nowUTC()
 		dt = tB.Sub(tA)
 		if hErr == nil {
@@ -142,11 +146,11 @@ func Run(ctx context.Context, t *conn.Target, opts Options) (*model.Context, err
 	g2.SetLimit(4)
 	for _, c := range registry {
 		c := c
-		if c.Kind() != KindCounter || c.Name() == healthName || !c.Available(caps) || (opts.SchemaOnly && !schemaCollectors[c.Name()]) {
+		if c.Kind() != KindCounter || c.Name() == healthName || !collectorAvailable(c, caps) || (opts.SchemaOnly && !schemaCollectors[c.Name()]) {
 			continue
 		}
 		g2.Go(func() error {
-			v, err := c.Sample(gctx2, t, caps)
+			v, err := sampleCollector(gctx2, c, t, caps, opts)
 			mu.Lock()
 			r := results[c.Name()]
 			if r == nil {
@@ -171,11 +175,14 @@ func Run(ctx context.Context, t *conn.Target, opts Options) (*model.Context, err
 		}
 		c.Assemble(out, caps, *s, dt, opts)
 	}
+	enrichCockroachContention(out)
 
 	// Fold in the active-session profile. Query text for per-query attribution
 	// comes from the queries collector's already-scrubbed normals.
 	if ashOn {
 		out.WaitProfile = profileFrom(ash, queryTexts(out))
+	} else if caps.IsCockroachDB() {
+		out.WaitProfile = &model.WaitProfile{Available: false, Reason: model.WaitSamplerUnsupportedCockroachReason}
 	} else {
 		out.WaitProfile = &model.WaitProfile{Available: false, Reason: model.WaitSamplerDisabledReason}
 	}

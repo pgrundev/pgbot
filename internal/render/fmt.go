@@ -50,6 +50,13 @@ func humanNum(v float64) string {
 
 func pct(v float64) string { return fmt.Sprintf("%.1f%%", v*100) }
 
+func humanDurationMS(ms float64) string {
+	if ms <= 0 {
+		return "0s"
+	}
+	return (time.Duration(ms * float64(time.Millisecond))).Round(time.Millisecond).String()
+}
+
 // wrapText word-wraps prose to width columns (for width-adaptive output). An
 // empty string yields no lines, so callers emit nothing.
 func wrapText(text string, width int) []string {

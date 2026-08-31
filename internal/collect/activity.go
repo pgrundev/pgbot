@@ -15,6 +15,12 @@ var sqlActivity string
 //go:embed sql/conn_breakdown.sql
 var sqlConnBreakdown string
 
+//go:embed sql/cockroach_activity.sql
+var sqlCockroachActivity string
+
+//go:embed sql/cockroach_conn_breakdown.sql
+var sqlCockroachConnBreakdown string
+
 // activity = a point-in-time read of pg_stat_activity.
 type activityCollector struct{}
 
@@ -48,13 +54,20 @@ type activitySample struct {
 	AVWorker avRow
 }
 
-func (activityCollector) Sample(ctx context.Context, t *conn.Target, _ conn.Capabilities) (any, error) {
-	rows, err := queryMany[activityRow](ctx, t, t.ExcludeSelf(sqlActivity))
+func (activityCollector) Sample(ctx context.Context, t *conn.Target, caps conn.Capabilities) (any, error) {
+	activitySQL, breakdownSQL := sqlActivity, sqlConnBreakdown
+	if caps.IsCockroachDB() {
+		activitySQL, breakdownSQL = sqlCockroachActivity, sqlCockroachConnBreakdown
+	}
+	rows, err := queryMany[activityRow](ctx, t, t.ExcludeSelf(activitySQL))
 	if err != nil {
 		return nil, err
 	}
 	out := activitySample{Rows: rows}
-	out.Conns, _ = queryMany[connRow](ctx, t, t.ExcludeSelf(sqlConnBreakdown)) // best-effort breakdown
+	out.Conns, _ = queryMany[connRow](ctx, t, t.ExcludeSelf(breakdownSQL)) // best-effort breakdown
+	if caps.IsCockroachDB() {
+		return out, nil
+	}
 	// Autovacuum worker count + longest-running worker (A19), best-effort.
 	out.AVWorker, _ = queryOne[avRow](ctx, t, `SELECT count(*) FILTER (WHERE backend_type = 'autovacuum worker')::int AS workers,
 		coalesce(max(extract(epoch FROM now() - xact_start)) FILTER (WHERE backend_type = 'autovacuum worker'), 0)::float8 AS max_age

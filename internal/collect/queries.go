@@ -36,6 +36,9 @@ type queryRow struct {
 func (queriesCollector) Name() string { return "queries" }
 func (queriesCollector) Kind() Kind   { return KindGauge }
 func (queriesCollector) Available(caps conn.Capabilities) bool {
+	if caps.IsCockroachDB() {
+		return caps.HasViewActivity && caps.HasCRDBStmtStats
+	}
 	return caps.HasStatStatements
 }
 
@@ -50,6 +53,9 @@ type queriesSample struct {
 }
 
 func (queriesCollector) Sample(ctx context.Context, t *conn.Target, caps conn.Capabilities) (any, error) {
+	if caps.IsCockroachDB() {
+		return sampleCockroachQueries(ctx, t, caps)
+	}
 	// The version-appropriate total-time column comes from a fixed allowlist
 	// (never user input); %% in the SQL escapes the ILIKE literal.
 	//
@@ -85,6 +91,10 @@ func (queriesCollector) Sample(ctx context.Context, t *conn.Target, caps conn.Ca
 }
 
 func (queriesCollector) Assemble(c *model.Context, caps conn.Capabilities, s sampled, _ time.Duration, _ Options) {
+	if caps.IsCockroachDB() {
+		assembleCockroachQueries(c, caps, s)
+		return
+	}
 	if !caps.HasStatStatements {
 		// A large fraction of first runs (especially RDS/Aurora) land here, so make
 		// it a first-class, provider-specific instruction rather than a dead end.

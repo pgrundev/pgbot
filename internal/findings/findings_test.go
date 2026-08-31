@@ -68,6 +68,13 @@ func TestCompute_missingPgssIsInfo(t *testing.T) {
 	}
 }
 
+func TestComputeCockroachDoesNotRecommendPgStatStatements(t *testing.T) {
+	c := &model.Context{Server: model.ServerInfo{Engine: "cockroachdb"}, Queries: &model.Queries{Enabled: false}}
+	if f := has(Compute(c), "pg_stat_statements_missing"); f != nil {
+		t.Fatalf("CockroachDB must not receive PostgreSQL extension advice: %+v", f)
+	}
+}
+
 func TestColdWindow_suppressesCounterFindings_keepsGauges(t *testing.T) {
 	cold := int64(120) // 2 min — below the 900s threshold
 	c := &model.Context{

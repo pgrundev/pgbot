@@ -53,7 +53,7 @@ func (c *OpenAIClient) Vendor() string    { return "OpenAI" }
 type chatRequest struct {
 	Model               string        `json:"model"`
 	Messages            []chatMessage `json:"messages"`
-	Temperature         float64       `json:"temperature,omitempty"`
+	Temperature         *float64      `json:"temperature,omitempty"`
 	MaxCompletionTokens int           `json:"max_completion_tokens,omitempty"`
 }
 
@@ -74,9 +74,10 @@ type chatResponse struct {
 	} `json:"error"`
 }
 
-// Generate sends one system + user turn and returns the model's text. Like the
-// Gemini client it does not retry — a failed explanation must not hang the CLI;
-// the caller degrades to the deterministic report alone.
+// Generate sends one system + user turn and returns the model's text. It makes
+// one compatibility retry without temperature when an OpenAI-compatible API
+// rejects a custom value; otherwise the caller degrades to the deterministic
+// report alone on failure.
 func (c *OpenAIClient) Generate(ctx context.Context, system, user string) (string, error) {
 	msgs := make([]chatMessage, 0, 2)
 	if system != "" {
@@ -84,49 +85,75 @@ func (c *OpenAIClient) Generate(ctx context.Context, system, user string) (strin
 	}
 	msgs = append(msgs, chatMessage{Role: "user", Content: user})
 
-	buf, err := json.Marshal(chatRequest{
-		Model:    c.Model,
-		Messages: msgs,
-		// Low temperature for a deterministic-ish explanation; headroom for output.
-		// Note: some reasoning models only accept the default temperature — set
-		// PGBOT_OPENAI_MODEL accordingly if you pin one.
-		Temperature:         0.2,
+	payload := chatRequest{
+		Model:               c.Model,
+		Messages:            msgs,
+		Temperature:         openAITemperature(c.Model),
 		MaxCompletionTokens: 8192,
-	})
+	}
+	out, retryWithoutTemperature, err := c.generate(ctx, payload)
+	if err != nil && payload.Temperature != nil && retryWithoutTemperature {
+		payload.Temperature = nil
+		out, _, err = c.generate(ctx, payload)
+	}
+	return out, err
+}
+
+// GPT-5.6 models only accept the default temperature, so omitting the field is
+// both valid and avoids a guaranteed rejected request. Other models retain the
+// low temperature used for deterministic-ish diagnostic explanations.
+func openAITemperature(model string) *float64 {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "gpt-5.6") {
+		return nil
+	}
+	temperature := 0.2
+	return &temperature
+}
+
+func (c *OpenAIClient) generate(ctx context.Context, payload chatRequest) (string, bool, error) {
+	buf, err := json.Marshal(payload)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/chat/completions", bytes.NewReader(buf))
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.APIKey) // header, never a URL param
 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("calling OpenAI: %w", err)
+		return "", false, fmt.Errorf("calling OpenAI: %w", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 
 	var cr chatResponse
 	if err := json.Unmarshal(body, &cr); err != nil {
-		return "", fmt.Errorf("openai returned unparseable response (HTTP %d)", resp.StatusCode)
+		return "", false, fmt.Errorf("openai returned unparseable response (HTTP %d)", resp.StatusCode)
 	}
 	if cr.Error != nil {
-		return "", fmt.Errorf("openai error: %s", cr.Error.Message)
+		return "", unsupportedTemperatureMessage(cr.Error.Message), fmt.Errorf("openai error: %s", cr.Error.Message)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("openai HTTP %d", resp.StatusCode)
+		return "", false, fmt.Errorf("openai HTTP %d", resp.StatusCode)
 	}
 	if len(cr.Choices) == 0 {
-		return "", fmt.Errorf("openai returned no choices")
+		return "", false, fmt.Errorf("openai returned no choices")
 	}
 	out := strings.TrimSpace(cr.Choices[0].Message.Content)
 	if out == "" {
-		return "", fmt.Errorf("openai returned an empty explanation (finish: %s)", cr.Choices[0].FinishReason)
+		return "", false, fmt.Errorf("openai returned an empty explanation (finish: %s)", cr.Choices[0].FinishReason)
 	}
-	return out, nil
+	return out, false, nil
+}
+
+func unsupportedTemperatureMessage(message string) bool {
+	message = strings.ToLower(message)
+	return strings.Contains(message, "temperature") &&
+		(strings.Contains(message, "unsupported") ||
+			strings.Contains(message, "does not support") ||
+			strings.Contains(message, "only the default"))
 }

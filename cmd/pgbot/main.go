@@ -50,6 +50,7 @@ func main() {
 	root.AddCommand(newLintCmd())
 	root.AddCommand(newInitCmd())
 	root.AddCommand(newWhyCmd())
+	root.AddCommand(newCockroachScreenCommands()...)
 
 	// enteredRun distinguishes a malformed invocation (bad flags/args/unknown
 	// command — cobra fails before PersistentPreRun) from an execution failure

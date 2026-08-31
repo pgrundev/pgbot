@@ -48,7 +48,7 @@ func runIndexes(cmd *cobra.Command, args []string, f inspectFlags, doCorrelate b
 	ctx, cancel := context.WithTimeout(cmd.Context(), f.timeout)
 	defer cancel()
 
-	c, _, err := gather(ctx, connString, f)
+	c, host, err := gather(ctx, connString, f)
 	if err != nil {
 		return err
 	}
@@ -69,6 +69,11 @@ func runIndexes(cmd *cobra.Command, args []string, f inspectFlags, doCorrelate b
 		}
 		renderCorrelation(os.Stdout, st, rep)
 		return nil
+	}
+	if c.Server.Engine == "cockroachdb" {
+		return render.CockroachScreen(os.Stdout, c, "indexes", render.Options{
+			Color: useColor(f.noColor), Host: host, Width: terminalWidth(), Full: true,
+		})
 	}
 
 	if c.Indexes == nil || len(c.Indexes.Unused) == 0 {

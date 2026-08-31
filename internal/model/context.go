@@ -41,6 +41,7 @@ type Context struct {
 	Window      Window         `json:"window"`
 	Health      *Health        `json:"health,omitempty"`
 	Activity    *Activity      `json:"activity,omitempty"`
+	Cockroach   *CockroachDB   `json:"cockroachdb,omitempty"`
 	Locks       *Locks         `json:"locks,omitempty"`
 	Queries     *Queries       `json:"queries,omitempty"`
 	Tables      *Tables        `json:"tables,omitempty"`
@@ -109,6 +110,10 @@ type WaitProfile struct {
 // off (--ash-hz 0) — the one unavailable state the report need not explain, as
 // opposed to a sampler that ran and failed.
 const WaitSamplerDisabledReason = "sampler disabled (--ash-hz 0)"
+
+// WaitSamplerUnsupportedCockroachReason distinguishes an engine capability gap
+// from an operator explicitly disabling PostgreSQL wait-event sampling.
+const WaitSamplerUnsupportedCockroachReason = "wait sampling not yet supported on CockroachDB"
 
 // Thin marks a profile too sparse to read as a percentage breakdown.
 func (w *WaitProfile) Thin() bool { return w != nil && w.Samples < WaitMinSamples }
@@ -182,17 +187,19 @@ type Limits struct {
 
 // ServerInfo is what we learned at connect time.
 type ServerInfo struct {
-	VersionNum    int        `json:"version_num"`
-	VersionText   string     `json:"version_text"`
-	Database      string     `json:"database"`
-	Provider      string     `json:"provider,omitempty"`    // detected managed platform: rds/aurora/cloudsql/azure/supabase/neon/unknown
-	InRecovery    bool       `json:"in_recovery,omitempty"` // true on a physical standby (A15-0)
-	ViaPooler     bool       `json:"via_pooler,omitempty"`  // connected through a transaction pooler (rates still correct)
-	StartedAt     *time.Time `json:"started_at,omitempty"`  // pg_postmaster_start_time()
-	UptimeSeconds int64      `json:"uptime_seconds"`
-	Extensions    []string   `json:"extensions"`
-	Capabilities  []string   `json:"capabilities"` // human-readable flags that were satisfied
-	HasPgMonitor  bool       `json:"has_pg_monitor"`
+	Engine          string     `json:"engine"` // postgresql or cockroachdb
+	VersionNum      int        `json:"version_num"`
+	VersionText     string     `json:"version_text"`
+	Database        string     `json:"database"`
+	Provider        string     `json:"provider,omitempty"`    // detected managed platform: rds/aurora/cloudsql/azure/supabase/neon/unknown
+	InRecovery      bool       `json:"in_recovery,omitempty"` // true on a physical standby (A15-0)
+	ViaPooler       bool       `json:"via_pooler,omitempty"`  // connected through a transaction pooler (rates still correct)
+	StartedAt       *time.Time `json:"started_at,omitempty"`  // pg_postmaster_start_time()
+	UptimeSeconds   int64      `json:"uptime_seconds"`
+	Extensions      []string   `json:"extensions"`
+	Capabilities    []string   `json:"capabilities"` // human-readable flags that were satisfied
+	HasPgMonitor    bool       `json:"has_pg_monitor"`
+	HasViewActivity bool       `json:"has_view_activity,omitempty"` // CockroachDB cluster activity visibility
 }
 
 // Window describes the sampling interval and how old the underlying cumulative
@@ -219,17 +226,249 @@ func (w Window) ColdWindow() bool {
 // Health is derived from pg_stat_database — the double-sampled aggregate rates.
 type Health struct {
 	Section
-	Connections     int      `json:"connections"`
-	TPS             *float64 `json:"tps,omitempty"` // commits+rollbacks per second
-	CommitsPerSec   *float64 `json:"commits_per_sec,omitempty"`
-	RollbacksPerSec *float64 `json:"rollbacks_per_sec,omitempty"`
-	RollbackRatio   *float64 `json:"rollback_ratio,omitempty"`       // over the sample window
-	CacheHitRatio   *float64 `json:"cache_hit_ratio,omitempty"`      // 0..1 over the sample window
-	CacheBlocks     *int64   `json:"cache_blocks_sampled,omitempty"` // blks_hit+blks_read within the window — the ratio's denominator
-	DeadlocksPerMin *float64 `json:"deadlocks_per_min,omitempty"`
-	TempBytesPerSec *float64 `json:"temp_bytes_per_sec,omitempty"`
-	TupReturnedPerS *float64 `json:"tuples_returned_per_sec,omitempty"`
-	TupWrittenPerS  *float64 `json:"tuples_written_per_sec,omitempty"` // ins+upd+del
+	Connections     int              `json:"connections"`
+	TPS             *float64         `json:"tps,omitempty"` // commits+rollbacks per second
+	CommitsPerSec   *float64         `json:"commits_per_sec,omitempty"`
+	RollbacksPerSec *float64         `json:"rollbacks_per_sec,omitempty"`
+	RollbackRatio   *float64         `json:"rollback_ratio,omitempty"`       // over the sample window
+	CacheHitRatio   *float64         `json:"cache_hit_ratio,omitempty"`      // 0..1 over the sample window
+	CacheBlocks     *int64           `json:"cache_blocks_sampled,omitempty"` // blks_hit+blks_read within the window — the ratio's denominator
+	DeadlocksPerMin *float64         `json:"deadlocks_per_min,omitempty"`
+	TempBytesPerSec *float64         `json:"temp_bytes_per_sec,omitempty"`
+	TupReturnedPerS *float64         `json:"tuples_returned_per_sec,omitempty"`
+	TupWrittenPerS  *float64         `json:"tuples_written_per_sec,omitempty"` // ins+upd+del
+	Cockroach       *CockroachHealth `json:"cockroachdb,omitempty"`            // engine-native cluster health
+}
+
+// CockroachHealth is a cluster-wide point-in-time health snapshot assembled
+// from the Admin API, the lightweight Prometheus load endpoint, and SQL jobs.
+// Source sections make partial coverage explicit instead of turning a missing
+// endpoint into a falsely clean report.
+type CockroachHealth struct {
+	AdminAPI     Section               `json:"admin_api"`
+	Prometheus   Section               `json:"prometheus"`
+	Jobs         Section               `json:"jobs"`
+	HotRanges    Section               `json:"hot_ranges"`
+	Distribution CockroachDistribution `json:"distribution"`
+	Storage      CockroachStorage      `json:"storage_replication"`
+
+	NodesTotal            int      `json:"nodes_total"`
+	NodesLive             int      `json:"nodes_live"`
+	NodesSuspect          int      `json:"nodes_suspect"`
+	NodesDraining         int      `json:"nodes_draining"`
+	NodesDecommissioned   int      `json:"nodes_decommissioned"`
+	StoresTotal           int      `json:"stores_total"`
+	RangeReplicas         int64    `json:"range_replicas"`
+	UnavailableRanges     int64    `json:"unavailable_ranges"`
+	UnderreplicatedRanges int64    `json:"underreplicated_ranges"`
+	CapacityBytes         int64    `json:"capacity_bytes"`
+	AvailableBytes        int64    `json:"available_bytes"`
+	MaxStoreUsedRatio     float64  `json:"max_store_used_ratio"`
+	MaxCPUPercent         float64  `json:"max_cpu_percent"`
+	MaxMemoryUsedRatio    float64  `json:"max_memory_used_ratio"`
+	SQLConnections        int      `json:"sql_connections"`
+	QueriesPerSec         *float64 `json:"queries_per_sec,omitempty"`
+	NewConnectionsPerSec  *float64 `json:"new_connections_per_sec,omitempty"`
+	ServiceLatencyP99MS   float64  `json:"service_latency_p99_ms,omitempty"`
+	AdmissionWaitP99MS    float64  `json:"admission_wait_p99_ms,omitempty"`
+	AdmissionQueueMax     int64    `json:"admission_queue_max,omitempty"`
+
+	Nodes       []CockroachNodeHealth  `json:"nodes,omitempty"`
+	Stores      []CockroachStoreHealth `json:"stores,omitempty"`
+	Hot         []CockroachHotRange    `json:"hottest_ranges,omitempty"`
+	JobsTotal   int                    `json:"jobs_total"`
+	JobsBounded bool                   `json:"jobs_bounded,omitempty"`
+	JobItems    []CockroachJobHealth   `json:"job_items,omitempty"`
+}
+
+type CockroachNodeHealth struct {
+	NodeID          int       `json:"node_id"`
+	Status          string    `json:"status"`
+	Locality        string    `json:"locality,omitempty"`
+	Version         string    `json:"version,omitempty"`
+	StartedAt       time.Time `json:"started_at,omitempty"`
+	UpdatedAt       time.Time `json:"updated_at,omitempty"`
+	CPUPercent      float64   `json:"cpu_percent,omitempty"`
+	RSSBytes        int64     `json:"rss_bytes,omitempty"`
+	MemoryBytes     int64     `json:"memory_bytes,omitempty"`
+	MemoryUsedRatio float64   `json:"memory_used_ratio,omitempty"`
+	SQLConnections  int       `json:"sql_connections"`
+}
+
+type CockroachStoreHealth struct {
+	NodeID                int     `json:"node_id"`
+	StoreID               int     `json:"store_id"`
+	CapacityBytes         int64   `json:"capacity_bytes"`
+	AvailableBytes        int64   `json:"available_bytes"`
+	UsedRatio             float64 `json:"used_ratio"`
+	RangeReplicas         int64   `json:"range_replicas"`
+	Leaseholders          int64   `json:"leaseholders"`
+	UnavailableRanges     int64   `json:"unavailable_ranges"`
+	UnderreplicatedRanges int64   `json:"underreplicated_ranges"`
+}
+
+// CockroachStorage summarizes storage-engine and replication health across
+// live stores. Counter fields are deltas over SampleSeconds; gauges and byte
+// counts are point-in-time values from the second Admin API sample.
+type CockroachStorage struct {
+	Section
+	LiveStores                  int                     `json:"live_stores"`
+	MVCCMetricsAvailable        bool                    `json:"mvcc_metrics_available"`
+	ReplicationMetricsAvailable bool                    `json:"replication_metrics_available"`
+	CounterSampledStores        int                     `json:"counter_sampled_stores"`
+	SampleSeconds               float64                 `json:"sample_seconds,omitempty"`
+	FilesystemUsedBytes         int64                   `json:"filesystem_used_bytes"`
+	CockroachUsedBytes          int64                   `json:"cockroach_used_bytes"`
+	OtherUsedBytes              int64                   `json:"other_used_bytes"`
+	MaxOtherUsedRatio           float64                 `json:"max_other_used_ratio"`
+	MaxOtherUsedStoreID         int                     `json:"max_other_used_store_id,omitempty"`
+	MVCCLiveBytes               int64                   `json:"mvcc_live_bytes"`
+	MVCCTotalBytes              int64                   `json:"mvcc_total_bytes"`
+	MVCCGarbageBytes            int64                   `json:"mvcc_garbage_bytes"`
+	MVCCLiveRatio               float64                 `json:"mvcc_live_ratio"`
+	BytesPerReplicaMin          float64                 `json:"bytes_per_replica_min"`
+	BytesPerReplicaMean         float64                 `json:"bytes_per_replica_mean"`
+	BytesPerReplicaMax          float64                 `json:"bytes_per_replica_max"`
+	SmallestReplicaBytesStoreID int                     `json:"smallest_replica_bytes_store_id,omitempty"`
+	LargestReplicaBytesStoreID  int                     `json:"largest_replica_bytes_store_id,omitempty"`
+	RangeReplicas               int64                   `json:"range_replicas"`
+	UninitializedReplicas       int64                   `json:"uninitialized_replicas"`
+	ReservedReplicas            int64                   `json:"reserved_replicas"`
+	OverreplicatedRanges        int64                   `json:"overreplicated_ranges"`
+	DecommissioningRanges       int64                   `json:"decommissioning_ranges"`
+	RaftCommandsPending         int64                   `json:"raft_commands_pending"`
+	MaxRaftCommandsPending      int64                   `json:"max_raft_commands_pending"`
+	MaxRaftPendingStoreID       int                     `json:"max_raft_pending_store_id,omitempty"`
+	RaftProbeFlows              int64                   `json:"raft_probe_flows"`
+	RaftSnapshotFlows           int64                   `json:"raft_snapshot_flows"`
+	ReplicateQueuePending       int64                   `json:"replicate_queue_pending"`
+	ReplicateQueuePurgatory     int64                   `json:"replicate_queue_purgatory"`
+	RaftSnapshotQueuePending    int64                   `json:"raft_snapshot_queue_pending"`
+	DiskSlowEvents              int64                   `json:"disk_slow_events"`
+	DiskStalledEvents           int64                   `json:"disk_stalled_events"`
+	DiskUnhealthySeconds        float64                 `json:"disk_unhealthy_seconds"`
+	WriteStallEvents            int64                   `json:"write_stall_events"`
+	WriteStallSeconds           float64                 `json:"write_stall_seconds"`
+	RaftDroppedMessages         int64                   `json:"raft_dropped_messages"`
+	Stores                      []CockroachStoreStorage `json:"stores,omitempty"`
+}
+
+type CockroachStoreStorage struct {
+	NodeID                   int     `json:"node_id"`
+	StoreID                  int     `json:"store_id"`
+	Status                   string  `json:"status"`
+	Locality                 string  `json:"locality,omitempty"`
+	CapacityBytes            int64   `json:"capacity_bytes"`
+	FilesystemUsedBytes      int64   `json:"filesystem_used_bytes"`
+	CockroachUsedBytes       int64   `json:"cockroach_used_bytes"`
+	OtherUsedBytes           int64   `json:"other_used_bytes"`
+	OtherUsedRatio           float64 `json:"other_used_ratio"`
+	MVCCLiveBytes            int64   `json:"mvcc_live_bytes"`
+	MVCCTotalBytes           int64   `json:"mvcc_total_bytes"`
+	MVCCGarbageBytes         int64   `json:"mvcc_garbage_bytes"`
+	BytesPerReplica          float64 `json:"bytes_per_replica"`
+	RangeReplicas            int64   `json:"range_replicas"`
+	UninitializedReplicas    int64   `json:"uninitialized_replicas"`
+	ReservedReplicas         int64   `json:"reserved_replicas"`
+	OverreplicatedRanges     int64   `json:"overreplicated_ranges"`
+	DecommissioningRanges    int64   `json:"decommissioning_ranges"`
+	RaftCommandsPending      int64   `json:"raft_commands_pending"`
+	RaftProbeFlows           int64   `json:"raft_probe_flows"`
+	RaftSnapshotFlows        int64   `json:"raft_snapshot_flows"`
+	ReplicateQueuePending    int64   `json:"replicate_queue_pending"`
+	ReplicateQueuePurgatory  int64   `json:"replicate_queue_purgatory"`
+	RaftSnapshotQueuePending int64   `json:"raft_snapshot_queue_pending"`
+	DiskSlowEvents           int64   `json:"disk_slow_events"`
+	DiskStalledEvents        int64   `json:"disk_stalled_events"`
+	DiskUnhealthySeconds     float64 `json:"disk_unhealthy_seconds"`
+	WriteStallEvents         int64   `json:"write_stall_events"`
+	WriteStallSeconds        float64 `json:"write_stall_seconds"`
+	RaftDroppedMessages      int64   `json:"raft_dropped_messages"`
+}
+
+// CockroachDistribution summarizes placement across live stores. Replica and
+// lease comparisons use only stores whose capacities are within 25% of the
+// live-store median, so a deliberately smaller store is not judged against a
+// much larger peer. Zone constraints can still explain skew and are surfaced as
+// a caveat by the findings layer.
+type CockroachDistribution struct {
+	Section
+	LiveStores                 int                     `json:"live_stores"`
+	ComparableStores           int                     `json:"comparable_stores"`
+	ExcludedStores             int                     `json:"excluded_stores"`
+	MultipleLocalities         bool                    `json:"multiple_localities,omitempty"`
+	ReplicaMean                float64                 `json:"replica_mean"`
+	ReplicaMin                 int64                   `json:"replica_min"`
+	ReplicaMax                 int64                   `json:"replica_max"`
+	ReplicaMinToMean           float64                 `json:"replica_min_to_mean"`
+	ReplicaMaxToMean           float64                 `json:"replica_max_to_mean"`
+	FewestReplicasStoreID      int                     `json:"fewest_replicas_store_id,omitempty"`
+	MostReplicasStoreID        int                     `json:"most_replicas_store_id,omitempty"`
+	LeaseMean                  float64                 `json:"lease_mean"`
+	LeaseMin                   int64                   `json:"lease_min"`
+	LeaseMax                   int64                   `json:"lease_max"`
+	LeaseMinToMean             float64                 `json:"lease_min_to_mean"`
+	LeaseMaxToMean             float64                 `json:"lease_max_to_mean"`
+	FewestLeasesStoreID        int                     `json:"fewest_leases_store_id,omitempty"`
+	MostLeasesStoreID          int                     `json:"most_leases_store_id,omitempty"`
+	CapacityUsedMinRatio       float64                 `json:"capacity_used_min_ratio"`
+	CapacityUsedMaxRatio       float64                 `json:"capacity_used_max_ratio"`
+	CapacityUsedSpread         float64                 `json:"capacity_used_spread"`
+	LeastUsedStoreID           int                     `json:"least_used_store_id,omitempty"`
+	MostUsedStoreID            int                     `json:"most_used_store_id,omitempty"`
+	HotRangeSampleCount        int                     `json:"hot_range_sample_count"`
+	HotRangeLeaseholderSamples int                     `json:"hot_range_leaseholder_samples"`
+	HotRangeCPUCores           float64                 `json:"hot_range_cpu_cores"`
+	HottestLeaseholderNodeID   int                     `json:"hottest_leaseholder_node_id,omitempty"`
+	HottestLeaseholderRanges   int                     `json:"hottest_leaseholder_ranges,omitempty"`
+	HottestLeaseholderCPUCores float64                 `json:"hottest_leaseholder_cpu_cores,omitempty"`
+	HottestLeaseholderCPUShare float64                 `json:"hottest_leaseholder_cpu_share,omitempty"`
+	Stores                     []CockroachStoreBalance `json:"stores,omitempty"`
+}
+
+type CockroachStoreBalance struct {
+	NodeID         int     `json:"node_id"`
+	StoreID        int     `json:"store_id"`
+	Status         string  `json:"status"`
+	Locality       string  `json:"locality,omitempty"`
+	Comparable     bool    `json:"comparable"`
+	CapacityBytes  int64   `json:"capacity_bytes"`
+	UsedRatio      float64 `json:"used_ratio"`
+	RangeReplicas  int64   `json:"range_replicas"`
+	Leaseholders   int64   `json:"leaseholders"`
+	NodeCPUPercent float64 `json:"node_cpu_percent,omitempty"`
+	TopHotRanges   int     `json:"top_hot_ranges,omitempty"`
+	TopHotCPUCores float64 `json:"top_hot_cpu_cores,omitempty"`
+}
+
+type CockroachHotRange struct {
+	RangeID           int64    `json:"range_id"`
+	NodeID            int      `json:"node_id"`
+	StoreID           int      `json:"store_id"`
+	LeaseholderNodeID int      `json:"leaseholder_node_id"`
+	QPS               float64  `json:"qps"`
+	CPUCores          float64  `json:"cpu_cores"`
+	ReadsPerSec       float64  `json:"reads_per_sec"`
+	WritesPerSec      float64  `json:"writes_per_sec"`
+	Databases         []string `json:"databases,omitempty"`
+	Schema            string   `json:"schema,omitempty"`
+	Tables            []string `json:"tables,omitempty"`
+	Indexes           []string `json:"indexes,omitempty"`
+}
+
+type CockroachJobHealth struct {
+	JobID         string     `json:"job_id"`
+	Type          string     `json:"type"`
+	State         string     `json:"state"`
+	CreatedAt     time.Time  `json:"created_at"`
+	FinishedAt    *time.Time `json:"finished_at,omitempty"`
+	Progress      float64    `json:"progress"`
+	ProgressKnown bool       `json:"progress_known,omitempty"`
+	Operation     string     `json:"operation,omitempty"`
+	StatusMessage string     `json:"status_message,omitempty"`
+	Error         string     `json:"error,omitempty"`
+	LastUpdatedAt *time.Time `json:"last_updated_at,omitempty"`
+	HighWaterAt   *time.Time `json:"high_water_at,omitempty"`
 }
 
 // CacheHitMinBlocks is the block traffic (blks_hit + blks_read, 8 KB each) a
@@ -287,36 +526,157 @@ type BlockingRow struct {
 	BlockedQuery string  `json:"blocked_query"` // scrubbed
 }
 
-// Queries is the top of pg_stat_statements — cumulative since stats_reset; the
-// temporal view comes from Deltas, not from the short in-process sample.
+// Queries is the engine's top persisted statement statistics: cumulative since
+// stats_reset on PostgreSQL, and aggregated over the last 24h on CockroachDB.
 type Queries struct {
 	Section
 	Enabled     bool        `json:"enabled"`
-	TotalExecMS float64     `json:"total_exec_ms,omitempty"` // cumulative exec time across ALL statements (prop_exec_time denominator)
+	TotalExecMS float64     `json:"total_exec_ms,omitempty"` // exec time across all statements in the engine's statistics window
 	PgssDealloc int64       `json:"pgss_dealloc,omitempty"`  // pg_stat_statements evictions (PG14+); >0 means the top list is a biased sample
 	PgssCount   int         `json:"pgss_count,omitempty"`    // current entry count
 	PgssMax     int         `json:"pgss_max,omitempty"`      // pg_stat_statements.max
+	StatsSource string      `json:"stats_source,omitempty"`  // CockroachDB source: activity_cache or public_statistics
+	WindowHours int         `json:"window_hours,omitempty"`  // CockroachDB persisted-statistics lookback
+	Bounded     bool        `json:"bounded,omitempty"`       // source is a cached top set, not every fingerprint
 	Top         []QueryStat `json:"top,omitempty"`
 }
 
 type QueryStat struct {
-	QueryID  int64    `json:"queryid"`
-	Query    string   `json:"query"` // normalized DML ($1); utility statements are stored verbatim by pgss, so the collector scrubs this
-	Calls    int64    `json:"calls"`
-	TotalMS  float64  `json:"total_ms"`
-	MeanMS   float64  `json:"mean_ms"`
-	MaxMS    float64  `json:"max_ms"`
-	Rows     int64    `json:"rows"`
-	CacheHit *float64 `json:"cache_hit,omitempty"`
-	WALBytes int64    `json:"wal_bytes"`
+	QueryID      int64    `json:"queryid"`
+	Fingerprint  string   `json:"fingerprint,omitempty"` // CockroachDB's stable statement fingerprint (hex)
+	AppName      string   `json:"application_name,omitempty"`
+	Query        string   `json:"query"` // normalized when the engine supports it; always scrubbed by the collector
+	Calls        int64    `json:"calls"`
+	TotalMS      float64  `json:"total_ms"`
+	MeanMS       float64  `json:"mean_ms"`
+	MaxMS        float64  `json:"max_ms"`
+	P99MS        *float64 `json:"p99_ms,omitempty"`
+	Rows         int64    `json:"rows"`
+	RowsRead     int64    `json:"rows_read,omitempty"`
+	RowsWritten  int64    `json:"rows_written,omitempty"`
+	BytesRead    int64    `json:"bytes_read,omitempty"`
+	ContentionMS float64  `json:"contention_ms,omitempty"`
+	MaxRetries   int64    `json:"max_retries,omitempty"`
+	CacheHit     *float64 `json:"cache_hit,omitempty"`
+	WALBytes     int64    `json:"wal_bytes"`
 }
 
-// Tables is pg_stat_user_tables (cumulative counters + gauges).
+// CockroachDB carries engine-native workload signals that do not have honest
+// PostgreSQL equivalents. Statement aggregates still populate Queries above so
+// baseline comparison and query-slowdown detection remain shared.
+type CockroachDB struct {
+	LiveQueries       CockroachLiveQueries       `json:"live_queries"`
+	ExecutionInsights CockroachExecutionInsights `json:"execution_insights"`
+	Contention        CockroachContention        `json:"contention"`
+}
+
+type CockroachLiveQueries struct {
+	Section
+	Items []CockroachLiveQuery `json:"items,omitempty"`
+}
+
+type CockroachLiveQuery struct {
+	QueryID     string  `json:"query_id"`
+	User        string  `json:"user"`
+	AppName     string  `json:"application_name,omitempty"`
+	Query       string  `json:"query"`
+	AgeSec      float64 `json:"age_seconds"`
+	Distributed bool    `json:"distributed"`
+	FullScan    bool    `json:"full_scan"`
+	Phase       string  `json:"phase,omitempty"`
+	Isolation   string  `json:"isolation_level,omitempty"`
+	Retries     int64   `json:"retries"`
+	AutoRetries int64   `json:"auto_retries"`
+}
+
+type CockroachExecutionInsights struct {
+	Section
+	Items []CockroachInsight `json:"items,omitempty"`
+}
+
+type CockroachInsight struct {
+	Kind                 string     `json:"kind"` // statement or transaction
+	Fingerprint          string     `json:"fingerprint,omitempty"`
+	Problem              string     `json:"problem"`
+	Causes               []string   `json:"causes,omitempty"`
+	Query                string     `json:"query,omitempty"`
+	Status               string     `json:"status"`
+	StartedAt            *time.Time `json:"started_at,omitempty"`
+	EndedAt              *time.Time `json:"ended_at,omitempty"`
+	FullScan             bool       `json:"full_scan,omitempty"`
+	User                 string     `json:"user,omitempty"`
+	AppName              string     `json:"application_name,omitempty"`
+	Retries              int64      `json:"retries,omitempty"`
+	LastRetryReason      string     `json:"last_retry_reason,omitempty"`
+	IndexRecommendations []string   `json:"index_recommendations,omitempty"`
+	RowsRead             int64      `json:"rows_read,omitempty"`
+	RowsWritten          int64      `json:"rows_written,omitempty"`
+	ContentionSec        float64    `json:"contention_seconds,omitempty"`
+	ServiceLatencyMS     float64    `json:"service_latency_ms,omitempty"`
+	AdmissionWaitMS      float64    `json:"admission_wait_ms,omitempty"`
+	ErrorCode            string     `json:"error_code,omitempty"`
+}
+
+// CockroachContention is a bounded, key-redacted view of CockroachDB's
+// cluster-wide in-memory contention event store. It intentionally excludes raw
+// keys and transaction IDs, which may reveal row-level data and are ephemeral.
+type CockroachContention struct {
+	Section
+	WindowMinutes          int                          `json:"window_minutes"`
+	Bounded                bool                         `json:"bounded"`
+	TotalEvents            int64                        `json:"total_events"`
+	TotalWaitMS            float64                      `json:"total_wait_ms"`
+	MaxWaitMS              float64                      `json:"max_wait_ms"`
+	SerializationConflicts int64                        `json:"serialization_conflicts"`
+	Hotspots               []CockroachContentionHotspot `json:"hotspots,omitempty"`
+}
+
+type CockroachContentionHotspot struct {
+	Database                     string    `json:"database"`
+	Schema                       string    `json:"schema"`
+	Table                        string    `json:"table"`
+	Index                        string    `json:"index,omitempty"`
+	Type                         string    `json:"type"`
+	WaitingStatementFingerprint  string    `json:"waiting_statement_fingerprint"`
+	BlockingTxnFingerprint       string    `json:"blocking_transaction_fingerprint,omitempty"`
+	BlockingStatementFingerprint string    `json:"blocking_statement_fingerprint,omitempty"`
+	WaitingQuery                 string    `json:"waiting_query,omitempty"`
+	BlockingQuery                string    `json:"blocking_query,omitempty"`
+	BlockingQueries              []string  `json:"blocking_queries,omitempty"`
+	WaitingApplications          []string  `json:"waiting_applications,omitempty"`
+	BlockingApplications         []string  `json:"blocking_applications,omitempty"`
+	WaiterResolution             string    `json:"waiter_resolution"`
+	BlockerResolution            string    `json:"blocker_resolution"`
+	Events                       int64     `json:"events"`
+	TotalWaitMS                  float64   `json:"total_wait_ms"`
+	MaxWaitMS                    float64   `json:"max_wait_ms"`
+	LastSeen                     time.Time `json:"last_seen"`
+}
+
+// CockroachDB contention events do not always carry a blocker fingerprint.
+// Keep that source limitation distinct from a fingerprint that simply aged
+// out of persisted SQL statistics or from a failed attribution lookup.
+const (
+	CockroachContentionResolved         = "resolved"
+	CockroachContentionNotResolved      = "not_resolved_by_cockroachdb"
+	CockroachContentionNotFound         = "not_found_in_statistics"
+	CockroachContentionStatsUnavailable = "statistics_unavailable"
+)
+
+// Tables is PostgreSQL pg_stat_user_tables or CockroachDB's cached Admin API
+// table metadata.
 type Tables struct {
 	Section
-	DBSizeBytes int64             `json:"db_size_bytes"`
-	Top         []TableStat       `json:"top,omitempty"`         // by total size
-	Partitioned []PartitionRollup `json:"partitioned,omitempty"` // leaf partitions rolled up to their root (A10)
+	DBSizeBytes      int64             `json:"db_size_bytes"`
+	Total            int               `json:"total,omitempty"`
+	Scanned          int               `json:"scanned,omitempty"`
+	StatsSource      string            `json:"stats_source,omitempty"`
+	SizeKind         string            `json:"size_kind,omitempty"`
+	MetadataBounded  bool              `json:"metadata_bounded"`
+	MetadataOldestAt *time.Time        `json:"metadata_oldest_at,omitempty"`
+	MetadataNewestAt *time.Time        `json:"metadata_newest_at,omitempty"`
+	Top              []TableStat       `json:"top,omitempty"`         // by total size
+	Partitioned      []PartitionRollup `json:"partitioned,omitempty"` // leaf partitions rolled up to their root (A10)
 }
 
 // PartitionRollup aggregates all leaf partitions of one partitioned table — so a
@@ -332,6 +692,8 @@ type PartitionRollup struct {
 }
 
 type TableStat struct {
+	Database         string     `json:"database,omitempty"`
+	TableID          int64      `json:"table_id,omitempty"`
 	Schema           string     `json:"schema"`
 	Name             string     `json:"table"`
 	TotalBytes       int64      `json:"total_bytes"`
@@ -354,17 +716,41 @@ type TableStat struct {
 	VacuumThresholdOverride  *float64   `json:"vacuum_threshold_override,omitempty"`
 	LastVacuum               *time.Time `json:"last_vacuum,omitempty"`
 	LastAutovac              *time.Time `json:"last_autovacuum,omitempty"`
+	ReplicatedBytes          int64      `json:"replicated_bytes,omitempty"`
+	LiveDataBytes            int64      `json:"live_data_bytes,omitempty"`
+	DataBytes                int64      `json:"data_bytes,omitempty"`
+	LiveDataRatio            float64    `json:"live_data_ratio,omitempty"`
+	RangeCount               int64      `json:"range_count,omitempty"`
+	ReplicaCount             int64      `json:"replica_count,omitempty"`
+	StoreIDs                 []int64    `json:"store_ids,omitempty"`
+	ColumnCount              int64      `json:"column_count,omitempty"`
+	IndexCount               int64      `json:"index_count,omitempty"`
+	AutoStatsEnabled         bool       `json:"auto_stats_enabled,omitempty"`
+	StatsLastUpdated         *time.Time `json:"stats_last_updated,omitempty"`
+	MetadataLastUpdated      *time.Time `json:"metadata_last_updated,omitempty"`
+	MetadataError            string     `json:"metadata_error,omitempty"`
+	TopHotRangeCount         int        `json:"top_hot_range_count,omitempty"`
+	TopHotRangeQPS           float64    `json:"top_hot_range_qps,omitempty"`
+	TopHotRangeCPUCores      float64    `json:"top_hot_range_cpu_cores,omitempty"`
 }
 
-// Indexes is pg_stat_user_indexes.
+// Indexes is PostgreSQL pg_stat_user_indexes or CockroachDB's cluster-wide,
+// in-memory index usage statistics.
 type Indexes struct {
 	Section
-	Total        int              `json:"total"`   // all user indexes
-	Scanned      int              `json:"scanned"` // how many (largest-first) were examined for the unused/largest lists
-	Unused       []IndexStat      `json:"unused,omitempty"`
-	Largest      []IndexStat      `json:"largest,omitempty"`
-	Redundant    []RedundantIndex `json:"redundant,omitempty"`
-	UnindexedFKs []UnindexedFK    `json:"unindexed_fks,omitempty"`
+	Total                  int              `json:"total"`   // all user indexes
+	Scanned                int              `json:"scanned"` // how many were examined for the bounded lists
+	SecondaryTotal         int              `json:"secondary_total,omitempty"`
+	StatsSource            string           `json:"stats_source,omitempty"`
+	CountersDurable        bool             `json:"counters_durable"`
+	WriteCountersAvailable bool             `json:"write_counters_available"`
+	UnusedThresholdHours   int              `json:"unused_threshold_hours,omitempty"`
+	Unused                 []IndexStat      `json:"unused,omitempty"`
+	Usage                  []IndexStat      `json:"usage,omitempty"`
+	MostWritten            []IndexStat      `json:"most_written,omitempty"`
+	Largest                []IndexStat      `json:"largest,omitempty"`
+	Redundant              []RedundantIndex `json:"redundant,omitempty"`
+	UnindexedFKs           []UnindexedFK    `json:"unindexed_fks,omitempty"`
 }
 
 // UnindexedFK is a foreign key with no supporting index on the child table —
@@ -388,18 +774,28 @@ type RedundantIndex struct {
 }
 
 type IndexStat struct {
-	Schema     string   `json:"schema"`
-	Table      string   `json:"table"`
-	Name       string   `json:"index"`
-	Scans      int64    `json:"scans"`
-	Bytes      int64    `json:"bytes"`
-	Definition string   `json:"definition,omitempty"`
-	Columns    []string `json:"columns,omitempty"`    // bare key columns (empty for a pure-expression index) — feeds code correlation
-	Method     string   `json:"method,omitempty"`     // access method: btree, gin, gist, brin, hash, spgist
-	Unique     bool     `json:"unique,omitempty"`     // enforces uniqueness
-	Primary    bool     `json:"primary,omitempty"`    // the table's primary-key index
-	Partial    bool     `json:"partial,omitempty"`    // has a WHERE predicate — may serve a narrow but critical path
-	Expression bool     `json:"expression,omitempty"` // indexes an expression, not bare columns
+	Database         string     `json:"database,omitempty"`
+	Schema           string     `json:"schema"`
+	Table            string     `json:"table"`
+	Name             string     `json:"index"`
+	Scans            int64      `json:"scans"`
+	Bytes            int64      `json:"bytes"`
+	Definition       string     `json:"definition,omitempty"`
+	Columns          []string   `json:"columns,omitempty"`    // bare key columns (empty for a pure-expression index) — feeds code correlation
+	Method           string     `json:"method,omitempty"`     // access method: btree, gin, gist, brin, hash, spgist
+	Unique           bool       `json:"unique,omitempty"`     // enforces uniqueness
+	Primary          bool       `json:"primary,omitempty"`    // the table's primary-key index
+	Partial          bool       `json:"partial,omitempty"`    // has a WHERE predicate — may serve a narrow but critical path
+	Expression       bool       `json:"expression,omitempty"` // indexes an expression, not bare columns
+	Writes           int64      `json:"writes,omitempty"`
+	LastRead         *time.Time `json:"last_read,omitempty"`
+	LastWrite        *time.Time `json:"last_write,omitempty"`
+	CreatedAt        *time.Time `json:"created_at,omitempty"`
+	IndexType        string     `json:"index_type,omitempty"`
+	Inverted         bool       `json:"inverted,omitempty"`
+	Sharded          bool       `json:"sharded,omitempty"`
+	Invisible        bool       `json:"invisible,omitempty"`
+	UnusedForSeconds float64    `json:"unused_for_seconds,omitempty"`
 }
 
 // WAL is pg_stat_wal (PG14+), double-sampled.

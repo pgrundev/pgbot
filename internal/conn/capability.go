@@ -11,18 +11,28 @@ import (
 // and are SKIPPED (not failed) when a capability is missing — a section is
 // marked unavailable rather than blanking the whole run.
 type Capabilities struct {
-	VersionNum        int
-	VersionText       string
-	Database          string
-	Provider          Provider  // detected managed platform, for provider-specific fixes
-	StartedAt         time.Time // pg_postmaster_start_time(); zero if not readable
-	SystemIdentifier  string    // pg_control_system(); "" if not readable
-	HasStatStatements bool
-	HasHypopg         bool
-	HasPgMonitor      bool
-	InRecovery        bool // pg_is_in_recovery(): true on a standby (A15-0)
-	RecoveryChecked   bool // the probe succeeded, so InRecovery is trustworthy (distinguishes "false" from "unknown")
-	Extensions        []string
+	Engine                Engine
+	VersionNum            int
+	VersionText           string
+	Database              string
+	Provider              Provider  // detected managed platform, for provider-specific fixes
+	StartedAt             time.Time // pg_postmaster_start_time(); zero if not readable
+	SystemIdentifier      string    // pg_control_system(); "" if not readable
+	HasStatStatements     bool
+	HasHypopg             bool
+	HasPgMonitor          bool
+	HasViewActivity       bool // CockroachDB VIEWACTIVITY or VIEWACTIVITYREDACTED
+	HasCRDBStmtStats      bool // information_schema.crdb_statement_statistics
+	HasCRDBStmtActivity   bool // bounded crdb_internal.statement_activity cache (requires allow_unsafe_internals)
+	HasCRDBInsights       bool // persisted statement/transaction execution insights
+	HasCRDBJobs           bool // information_schema.crdb_jobs_with_progress
+	HasCRDBContention     bool // crdb_internal.transaction_contention_events
+	HasCRDBStatementStore bool // system.statements (query-text store, CockroachDB 26.2+)
+	HasCRDBIndexUsage     bool // cluster-wide crdb_internal.index_usage_statistics + descriptor metadata
+	HasCRDBIndexWrites    bool // newer index-usage schema also exposes write counters
+	InRecovery            bool // pg_is_in_recovery(): true on a standby (A15-0)
+	RecoveryChecked       bool // the probe succeeded, so InRecovery is trustworthy (distinguishes "false" from "unknown")
+	Extensions            []string
 	// ExtensionSchemas maps an installed extension to the namespace its objects
 	// live in (pg_extension.extnamespace). Supabase installs pg_stat_statements
 	// (and hypopg) in "extensions", not public, and a dedicated read-only role
@@ -76,10 +86,12 @@ func (c Capabilities) ManagedProvider() bool {
 
 // HasStatWAL and the flags below are version-derived feature gates, kept as
 // methods so the thresholds live in one place and read like the docs.
-func (c Capabilities) HasStatWAL() bool               { return c.VersionNum >= 140000 } // pg_stat_wal
-func (c Capabilities) HasStatIO() bool                { return c.VersionNum >= 160000 } // pg_stat_io
-func (c Capabilities) HasStatCheckpointer() bool      { return c.VersionNum >= 170000 } // pg_stat_checkpointer
-func (c Capabilities) HasStatsFetchConsistency() bool { return c.VersionNum >= 150000 }
+func (c Capabilities) HasStatWAL() bool          { return !c.IsCockroachDB() && c.VersionNum >= 140000 } // pg_stat_wal
+func (c Capabilities) HasStatIO() bool           { return !c.IsCockroachDB() && c.VersionNum >= 160000 } // pg_stat_io
+func (c Capabilities) HasStatCheckpointer() bool { return !c.IsCockroachDB() && c.VersionNum >= 170000 } // pg_stat_checkpointer
+func (c Capabilities) HasStatsFetchConsistency() bool {
+	return !c.IsCockroachDB() && c.VersionNum >= 150000
+}
 func (c Capabilities) StatStatementsTotalCol() string { // renamed in PG13
 	if c.VersionNum >= 130000 {
 		return "total_exec_time"
@@ -97,6 +109,15 @@ func (c Capabilities) Satisfied() []string {
 		}
 	}
 	add(c.HasPgMonitor, "pg_monitor")
+	add(c.HasViewActivity, "cockroachdb_view_activity")
+	add(c.HasCRDBStmtStats, "cockroachdb_statement_statistics")
+	add(c.HasCRDBStmtActivity, "cockroachdb_statement_activity_cache")
+	add(c.HasCRDBInsights, "cockroachdb_execution_insights")
+	add(c.HasCRDBJobs, "cockroachdb_jobs")
+	add(c.HasCRDBContention, "cockroachdb_contention_events")
+	add(c.HasCRDBStatementStore, "cockroachdb_statement_store")
+	add(c.HasCRDBIndexUsage, "cockroachdb_index_usage")
+	add(c.HasCRDBIndexWrites, "cockroachdb_index_write_statistics")
 	add(c.HasStatStatements, "pg_stat_statements")
 	add(c.HasHypopg, "hypopg")
 	add(c.HasStatWAL(), "pg_stat_wal")

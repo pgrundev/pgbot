@@ -14,7 +14,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newQueriesCmd — `pgbot queries`. The top statements from pg_stat_statements,
+// newQueriesCmd — `pgbot queries`. The top statements from the engine's
 // ranked by total execution time (the query quietly eating the database) or by
 // call count with --by-calls (a cheap query run a million times). Read-only.
 func newQueriesCmd() *cobra.Command {
@@ -22,7 +22,7 @@ func newQueriesCmd() *cobra.Command {
 	var byCalls bool
 	cmd := &cobra.Command{
 		Use:   "queries <connection-string>",
-		Short: "Top queries by total execution time (or --by-calls), from pg_stat_statements",
+		Short: "Top queries by total execution time (or --by-calls)",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runQueries(cmd, args, f, byCalls)
@@ -57,11 +57,11 @@ func runQueries(cmd *cobra.Command, args []string, f inspectFlags, byCalls bool)
 	st := render.NewStyler(useColor(f.noColor))
 
 	if c.Queries == nil || !c.Queries.Enabled {
-		reason := "pg_stat_statements not enabled"
+		reason := "query statistics are unavailable"
 		if c.Queries != nil && c.Queries.Reason != "" {
 			reason = c.Queries.Reason
 		}
-		fmt.Println(st.Warn("pg_stat_statements is required for query stats."))
+		fmt.Println(st.Warn("Query statistics are unavailable."))
 		fmt.Println(st.Dim("  " + reason))
 		return nil
 	}
@@ -72,8 +72,15 @@ func runQueries(cmd *cobra.Command, args []string, f inspectFlags, byCalls bool)
 		sort.SliceStable(top, func(i, j int) bool { return top[i].Calls > top[j].Calls })
 		label = "by call count"
 	}
+	if c.Server.Engine == "cockroachdb" {
+		c.Queries.Top = top
+		return render.CockroachScreen(os.Stdout, c, "queries", render.Options{
+			Color: useColor(f.noColor), Host: host, Width: terminalWidth(), Full: true,
+		})
+	}
 
-	fmt.Printf("%s · %s · top %d queries %s\n\n", st.Head(host), pgVersionShort(c.Server.VersionNum), len(top), st.Dim(label))
+	version := pgVersionShort(c.Server.VersionNum)
+	fmt.Printf("%s · %s · top %d queries %s\n\n", st.Head(host), version, len(top), st.Dim(label))
 	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, "  total\tshare\tcalls\tmean\tquery")
 	for _, q := range top {

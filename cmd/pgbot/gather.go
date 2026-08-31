@@ -7,6 +7,7 @@ import (
 
 	"github.com/pgrundev/pgbot/internal/collect"
 	"github.com/pgrundev/pgbot/internal/conn"
+	"github.com/pgrundev/pgbot/internal/crdbhttp"
 	"github.com/pgrundev/pgbot/internal/model"
 	"github.com/pgrundev/pgbot/internal/store"
 )
@@ -21,6 +22,14 @@ func gather(ctx context.Context, connString string, f inspectFlags) (*model.Cont
 		return nil, "", fmt.Errorf("connect: %s", conn.RedactConnString(err.Error()))
 	}
 	defer target.Close()
+	var httpClient *crdbhttp.Client
+	if f.crdbHTTP {
+		httpClient, err = newCockroachHTTP(connString, target.Caps, f)
+		if err != nil {
+			return nil, "", err
+		}
+	}
+	defer closeCockroachHTTP(httpClient)
 
 	if target.Pooler.Detected {
 		if f.strictPooler {
@@ -30,7 +39,10 @@ func gather(ctx context.Context, connString string, f inspectFlags) (*model.Cont
 		fmt.Fprintln(os.Stderr, target.Pooler.Note())
 	}
 
-	c, err := collect.Run(ctx, target, collect.Options{Interval: f.interval, ASHHz: f.ashHz, ASHWindow: f.window})
+	c, err := collect.Run(ctx, target, collect.Options{
+		Interval: f.interval, ASHHz: f.ashHz, ASHWindow: f.window,
+		Deadline: f.timeout, CockroachHTTP: httpClient,
+	})
 	if err != nil {
 		return nil, "", fmt.Errorf("collect: %s", conn.RedactConnString(err.Error()))
 	}

@@ -25,14 +25,14 @@ func newInitCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init [connection-string]",
 		Short: "Generate the read-only role setup SQL (nothing is executed)",
-		Long: "Print the SQL that creates the pg_monitor read-only role pgbot connects as,\n" +
-			"plus the provider-specific pg_stat_statements steps. pgbot never writes: review\n" +
+		Long: "Print the SQL that creates the read-only role pgbot connects as: pg_monitor\n" +
+			"on PostgreSQL or VIEWACTIVITY on CockroachDB. pgbot never writes: review\n" +
 			"the output, set a real password, and run it yourself, e.g.\n" +
 			"  pgbot init \"postgres://admin@host/db\" | psql \"postgres://admin@host/db\"\n" +
 			"With a connection string, the database name and provider are detected so the\n" +
 			"output is tailored; without one, placeholders are used.\n" +
 			"--verify connects as the monitoring role instead and checks the prerequisites\n" +
-			"(pg_monitor, pg_stat_statements, primary vs standby).",
+			"for the detected database engine.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			connString := firstNonEmpty(argAt(args, 0), os.Getenv("DATABASE_URL"), os.Getenv("PGBOT_DATABASE_URL"))
@@ -57,6 +57,7 @@ func newInitCmd() *cobra.Command {
 			}
 
 			provider := conn.ProviderUnknown
+			engine := conn.EnginePostgreSQL
 			db := database
 			if connString != "" {
 				ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
@@ -67,12 +68,13 @@ func newInitCmd() *cobra.Command {
 				}
 				db = firstNonEmpty(database, t.Caps.Database)
 				provider = t.Caps.Provider
+				engine = t.Caps.EngineName()
 				t.Close()
 			}
 			if db == "" {
 				db = "yourdb"
 			}
-			fmt.Fprint(cmd.OutOrStdout(), initSQL(role, db, provider))
+			fmt.Fprint(cmd.OutOrStdout(), initSQLForEngine(role, db, provider, engine))
 			return nil
 		},
 	}
@@ -89,12 +91,23 @@ func newInitCmd() *cobra.Command {
 // step. Contract, pinned by tests: every line is a statement, a -- comment, or
 // blank, so `pgbot init | psql` can never run anything unreviewed prose-shaped.
 func initSQL(role, database string, p conn.Provider) string {
+	return initSQLForEngine(role, database, p, conn.EnginePostgreSQL)
+}
+
+func initSQLForEngine(role, database string, p conn.Provider, engine conn.Engine) string {
 	var b strings.Builder
 	b.WriteString("-- pgbot init — read-only monitoring role (generated, NOT executed)\n")
 	b.WriteString("-- Review, replace the password placeholder, then run as an admin:\n")
 	b.WriteString("--   pgbot init | psql \"$ADMIN_DSN\"\n")
 	b.WriteString("\n")
 	fmt.Fprintf(&b, "CREATE ROLE %s LOGIN PASSWORD 'REPLACE-WITH-A-STRONG-PASSWORD';\n", role)
+	if engine == conn.EngineCockroachDB {
+		fmt.Fprintf(&b, "GRANT CONNECT ON DATABASE %s TO %s;\n", database, role)
+		fmt.Fprintf(&b, "GRANT SYSTEM VIEWACTIVITY TO %s;\n", role)
+		b.WriteString("\n-- CockroachDB preview collects read-only SQL workload diagnostics.\n")
+		fmt.Fprintf(&b, "-- export DATABASE_URL=\"postgresql://%s:REPLACE-WITH-A-STRONG-PASSWORD@HOST:26257/%s?sslmode=verify-full\"\n", role, database)
+		return b.String()
+	}
 	fmt.Fprintf(&b, "GRANT pg_monitor TO %s;\n", role)
 	fmt.Fprintf(&b, "GRANT CONNECT ON DATABASE %s TO %s;\n", database, role)
 	b.WriteString("\n")
@@ -127,6 +140,27 @@ func initVerifyReport(caps conn.Capabilities) (lines []string, critical bool) {
 	}
 	if caps.Provider != "" && caps.Provider != conn.ProviderUnknown {
 		lines = append(lines, fmt.Sprintf("  ok    provider detected: %s", caps.Provider))
+	}
+	if caps.IsCockroachDB() {
+		if caps.HasViewActivity {
+			lines = append(lines, "  ok    role holds VIEWACTIVITY or VIEWACTIVITYREDACTED — cluster activity is visible")
+		} else {
+			critical = true
+			lines = append(lines, "  FAIL  role lacks VIEWACTIVITY — only its own sessions are visible.")
+			lines = append(lines, "        Fix (as an admin): GRANT SYSTEM VIEWACTIVITY TO <role>;")
+		}
+		if caps.HasCRDBStmtStats {
+			lines = append(lines, "  ok    persisted statement statistics available")
+		} else {
+			lines = append(lines, "  note  persisted statement statistics are unavailable on this CockroachDB version")
+		}
+		if caps.HasCRDBInsights {
+			lines = append(lines, "  ok    persisted execution insights available")
+		} else {
+			lines = append(lines, "  note  persisted execution insights are unavailable on this CockroachDB version")
+		}
+		lines = append(lines, "  note  CockroachDB preview covers SQL workload diagnostics; cluster health coverage is partial")
+		return lines, critical
 	}
 
 	if caps.HasPgMonitor {

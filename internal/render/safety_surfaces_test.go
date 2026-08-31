@@ -16,12 +16,13 @@ import (
 // is NOT in this set — so a new surface can't ship silently without carrying the
 // destructive-action guards.
 var coveredSurfaces = map[string]bool{
-	"JSON":          true, // structured: full safety object
-	"SARIF":         true, // text message
-	"JUnit":         true, // <failure> text
-	"Terminal":      true, // grouped + --full
-	"Prometheus":    true, // destructive="true" label
-	"PrometheusAll": true, // multi-db variant of Prometheus (same emission)
+	"JSON":            true, // structured: full safety object
+	"SARIF":           true, // text message
+	"JUnit":           true, // <failure> text
+	"Terminal":        true, // grouped + --full
+	"Prometheus":      true, // destructive="true" label
+	"PrometheusAll":   true, // multi-db variant of Prometheus (same emission)
+	"CockroachScreen": true, // focused terminal screen; index findings retain DROP guards
 }
 
 // TestSafety_everySurfaceCarriesGuards renders a guarded context through every
@@ -50,6 +51,11 @@ func TestSafety_everySurfaceCarriesGuards(t *testing.T) {
 			[]string{"DROP INDEX", "VACUUM FULL"}},
 		{"Terminal-full", render(func(b *bytes.Buffer) error { return Terminal(b, guardedContext(), Options{Full: true, Width: 100}) }),
 			[]string{"DROP INDEX", "VACUUM FULL"}},
+		{"CockroachScreen", render(func(b *bytes.Buffer) error {
+			c := guardedContext()
+			c.Server.Engine = "cockroachdb"
+			return CockroachScreen(b, c, "indexes", Options{Width: 100})
+		}), []string{"DROP INDEX", "the index is unused on every replica"}},
 		{"Prometheus", render(func(b *bytes.Buffer) error { return Prometheus(b, guardedContext()) }),
 			[]string{`destructive="true"`}},
 	}

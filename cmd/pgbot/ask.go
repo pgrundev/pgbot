@@ -14,7 +14,8 @@ import (
 )
 
 // newAskCmd — `pgbot ask "why is it slow?"`. Collects the same read-only report,
-// then answers the question grounded ONLY on those deterministic findings. Like
+// then answers the question grounded only on deterministic findings and the
+// aggregate health summary. Like
 // `explain` but question-driven and AI-first (no report printed above).
 func newAskCmd() *cobra.Command {
 	var f inspectFlags
@@ -24,8 +25,9 @@ func newAskCmd() *cobra.Command {
 		Use:   `ask "<question>"`,
 		Short: "Ask an AI about your database, grounded on pgbot's findings",
 		Long: "Runs the same read-only inspection, then answers your question using ONLY the\n" +
-			"deterministic findings (the model can't reach into the database). Connection\n" +
-			"comes from --url or $DATABASE_URL. Sends the PII-free findings to an AI provider —\n" +
+			"deterministic findings and aggregate health summary (the model can't reach into\n" +
+			"the database). Connection comes from --url or $DATABASE_URL. Sends that PII-free\n" +
+			"diagnostic summary to an AI provider —\n" +
 			"set $OPENAI_API_KEY (OpenAI) or $GEMINI_API_KEY (Google Gemini).",
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -36,8 +38,11 @@ func newAskCmd() *cobra.Command {
 	fl.StringVar(&url, "url", "", "connection string (else $DATABASE_URL)")
 	fl.DurationVar(&f.window, "window", 5*time.Second, "active-session sampling window")
 	fl.IntVar(&f.ashHz, "ash-hz", 10, "active-session sampling rate in Hz (0 disables)")
+	fl.DurationVar(&f.timeout, "timeout", 45*time.Second, "wall-clock budget for database collection")
 	fl.BoolVar(&f.noStore, "no-store", false, "do not read or write the local baseline store")
 	fl.BoolVar(&f.strictPooler, "strict-pooler", false, "refuse (exit 3) behind a transaction pooler")
+	fl.StringVar(&f.crdbAdminURL, "crdb-admin-url", "", "CockroachDB DB Console/Admin API origin (or PGBOT_CRDB_ADMIN_URL)")
+	fl.StringVar(&f.crdbPromURL, "crdb-prometheus-url", "", "CockroachDB Prometheus origin or /_status/load URL (defaults to admin URL)")
 	fl.BoolVar(&yes, "yes", false, "skip the 'this sends data to the AI provider' confirmation prompt")
 	return cmd
 }
@@ -47,7 +52,7 @@ func runAsk(cmd *cobra.Command, question, url string, f inspectFlags, yes bool) 
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "pgbot ask: this sends the PII-free findings to %s (model %s).\n", client.Vendor(), client.ModelName())
+	fmt.Fprintf(os.Stderr, "pgbot ask: this sends a PII-free diagnostic summary to %s (model %s).\n", client.Vendor(), client.ModelName())
 	if !yes && isInteractive() && !confirm() {
 		return fmt.Errorf("aborted")
 	}
@@ -57,16 +62,18 @@ func runAsk(cmd *cobra.Command, question, url string, f inspectFlags, yes bool) 
 		return fmt.Errorf("no connection string (pass --url or set $DATABASE_URL)")
 	}
 	f.interval = time.Second
+	f.crdbHTTP = true
 
-	ctx, cancel := context.WithTimeout(cmd.Context(), 45*time.Second)
-	defer cancel()
-
-	c, _, err := gather(ctx, connString, f)
+	collectCtx, cancelCollect := context.WithTimeout(cmd.Context(), f.timeout)
+	c, _, err := gather(collectCtx, connString, f)
+	cancelCollect()
 	if err != nil {
 		return err
 	}
 
-	answer, aiErr := ai.Ask(ctx, client, c, question)
+	aiCtx, cancelAI := context.WithTimeout(cmd.Context(), 60*time.Second)
+	defer cancelAI()
+	answer, aiErr := ai.Ask(aiCtx, client, c, question)
 	printAnswer(useColor(false), client.ModelName(), answer, aiErr)
 	if aiErr == nil {
 		// `ask` prints only the model's prose, so a destructive-action guard that

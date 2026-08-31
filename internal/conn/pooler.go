@@ -34,6 +34,10 @@ type PoolerInfo struct {
 //
 // Host/port heuristics are only used to make the error message friendlier.
 func detectPooler(ctx context.Context, c *pgx.Conn, cc *pgx.ConnConfig) PoolerInfo {
+	return detectPoolerForEngine(ctx, c, cc, EnginePostgreSQL)
+}
+
+func detectPoolerForEngine(ctx context.Context, c *pgx.Conn, cc *pgx.ConnConfig, engine Engine) PoolerInfo {
 	info := PoolerInfo{Hint: poolerHint(cc)}
 
 	// (1) prepared-statement probe
@@ -68,7 +72,7 @@ func detectPooler(ctx context.Context, c *pgx.Conn, cc *pgx.ConnConfig) PoolerIn
 	// (3) PgDog identification (issue #22) — behavioral, never hostname-based.
 	// PgDog consumes SET pgdog.* routing hints instead of forwarding them, so a
 	// SET LOCAL that vanishes within its own transaction can only mean PgDog.
-	if detectPgDog(ctx, c) {
+	if engine == EnginePostgreSQL && detectPgDog(ctx, c) {
 		info.Detected = true
 		info.Hint = "a PgDog pooler"
 	}

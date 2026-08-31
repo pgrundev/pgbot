@@ -39,6 +39,18 @@ var clusterWide = map[string]bool{
 	// checksum failures read ALL of pg_stat_database (its own SQL says so), so the
 	// finding is identical from every database — report it once, not N times.
 	"checksum_failures": true,
+	// CockroachDB Admin API, Prometheus, jobs, and cluster-query sources.
+	"crdb_node_unavailable": true, "crdb_ranges_unavailable": true,
+	"crdb_ranges_underreplicated": true, "crdb_store_capacity": true,
+	"crdb_resource_pressure": true, "crdb_job_failed": true, "crdb_job_stalled": true,
+	"crdb_job_reverting": true, "crdb_job_paused": true, "crdb_version_skew": true,
+	"crdb_replica_imbalance": true, "crdb_leaseholder_imbalance": true,
+	"crdb_capacity_imbalance": true, "crdb_hot_range_concentration": true,
+	"crdb_external_disk_usage": true, "crdb_storage_stall": true,
+	"crdb_replication_recovery": true, "crdb_raft_backlog": true,
+	"crdb_replica_size_skew":  true,
+	"crdb_long_running_query": true,
+	"crdb_contention_hotspot": true, "crdb_serialization_conflicts": true,
 	// NOTE: work_mem_low is deliberately NOT here. It is driven by THIS
 	// database's pg_stat_database.temp_bytes rate (health.sql filters on
 	// current_database()), so a second database that spills genuinely needs its

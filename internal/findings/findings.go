@@ -73,8 +73,50 @@ const (
 	replicaLagCritSec = 300.0
 
 	// Query slowdown vs the baseline (the "what changed" finding).
-	querySlowdownFactor = 2.0  // at least 2× slower
-	querySlowdownMinMs  = 10.0 // and the new mean ≥ 10ms, so micro-queries aren't noise
+	querySlowdownFactor       = 2.0  // at least 2× slower
+	querySlowdownMinMs        = 10.0 // and the new mean ≥ 10ms, so micro-queries aren't noise
+	crdbLongQuerySec          = 60.0 // live statement running for at least one minute
+	crdbRetryHotspotMin       = 3    // max retries observed for one statement fingerprint
+	crdbStoreWarn             = 0.80 // store capacity used
+	crdbStoreCrit             = 0.90
+	crdbCPUWarn               = 90.0 // normalized percent on the busiest node
+	crdbMemoryWarn            = 0.90
+	crdbAdmissionWarnMS       = 100.0
+	crdbContentionTotalWarnMS = 5_000.0
+	crdbContentionMaxWarnMS   = 1_000.0
+	crdbSerializationWarn     = 5
+	crdbStatsTableMinBytes    = int64(64 << 20)
+	crdbMVCCGarbageMinBytes   = int64(1 << 30)
+	crdbMVCCLiveRatioWarn     = 0.50
+	crdbJobStalledSec         = int64(30 * 60)
+	crdbBalanceMinStores      = 3
+	crdbReplicaMeanMin        = 100.0
+	crdbReplicaSpreadMin      = int64(100)
+	crdbReplicaMaxMeanWarn    = 1.35
+	crdbReplicaMinMeanWarn    = 0.65
+	crdbLeaseMeanMin          = 50.0
+	crdbLeaseSpreadMin        = int64(100)
+	crdbLeaseMaxMeanWarn      = 1.50
+	crdbLeaseMinMeanWarn      = 0.50
+	crdbCapacityImbalanceMax  = 0.70
+	crdbCapacitySpreadWarn    = 0.20
+	crdbHotRangeMinSamples    = 5
+	crdbHotRangeMinCPUCores   = 0.50
+	crdbHotRangeShareWarn     = 0.60
+	crdbHotRangeLeaderMin     = 3
+	crdbExternalDiskUsedMin   = 0.80
+	crdbExternalDiskRatioMin  = 0.20
+	crdbExternalDiskBytesMin  = int64(10 << 30)
+	crdbUninitializedMin      = int64(10)
+	crdbUninitializedRatioMin = 0.02
+	crdbReplicaPurgatoryMin   = int64(10)
+	crdbSnapshotQueueMin      = int64(10)
+	crdbRaftPendingStoreWarn  = int64(100)
+	crdbRaftFlowRatioWarn     = 0.01
+	crdbRaftDroppedPerSecWarn = 100.0
+	crdbReplicaBytesMeanMin   = float64(64 << 20)
+	crdbReplicaBytesMaxMean   = 1.75
+	crdbReplicaBytesMinMean   = 0.60
 
 	// Replication-slot WAL retention. An inactive slot pins WAL from its restart
 	// point; the retained log grows until the consumer reconnects or the slot is
@@ -133,8 +175,23 @@ var knownIDs = map[string]bool{
 	"full_page_writes_off": true, "autovacuum_off": true, "random_page_cost_high": true,
 	"work_mem_overcommit": true, "statement_timeout_unset": true, "io_timing_off": true,
 	"high_rollback_ratio": true, "pg_stat_statements_missing": true,
-	"stale_stats_window": true,
-	"pgaudit_silent":     true, "pgaudit_logs_parameters": true, "pgaudit_double_logging": true,
+	"stale_stats_window":      true,
+	"crdb_execution_insights": true, "crdb_index_recommendations": true,
+	"crdb_unused_indexes":       true,
+	"crdb_table_metadata_error": true, "crdb_table_stats_missing": true,
+	"crdb_auto_stats_disabled": true, "crdb_mvcc_garbage_pressure": true,
+	"crdb_long_running_query": true, "crdb_retry_hotspot": true,
+	"crdb_node_unavailable": true, "crdb_ranges_unavailable": true,
+	"crdb_ranges_underreplicated": true, "crdb_store_capacity": true,
+	"crdb_resource_pressure": true, "crdb_job_failed": true, "crdb_job_stalled": true,
+	"crdb_job_reverting": true, "crdb_job_paused": true, "crdb_version_skew": true,
+	"crdb_replica_imbalance": true, "crdb_leaseholder_imbalance": true,
+	"crdb_capacity_imbalance": true, "crdb_hot_range_concentration": true,
+	"crdb_external_disk_usage": true, "crdb_storage_stall": true,
+	"crdb_replication_recovery": true, "crdb_raft_backlog": true,
+	"crdb_replica_size_skew":  true,
+	"crdb_contention_hotspot": true, "crdb_serialization_conflicts": true,
+	"pgaudit_silent": true, "pgaudit_logs_parameters": true, "pgaudit_double_logging": true,
 	// B2 meta-findings (the suppression system reporting on itself).
 	"suppression_expired": true, "suppression_unused": true,
 }
@@ -211,6 +268,7 @@ func ComputeWithTunables(c *model.Context, tun Tunables) []model.Finding {
 	missingPgss(c, add)
 	pgssEntriesEvicted(c, add)
 	staleStatsWindow(c, add)
+	cockroachFindings(c, add)
 
 	// T9 ordering: risk (time-to-incident) is pinned to the top — a wraparound or
 	// an invalid index outranks any storage or latency win. Within that, sort by
@@ -231,6 +289,933 @@ func ComputeWithTunables(c *model.Context, tun Tunables) []model.Finding {
 		return f[i].ID < f[j].ID
 	})
 	return f
+}
+
+func cockroachFindings(c *model.Context, add func(model.Finding)) {
+	if c.Server.Engine != "cockroachdb" {
+		return
+	}
+	crdbLongRunningQueries(c, add)
+	crdbRetryHotspots(c, add)
+	crdbExecutionInsights(c, add)
+	crdbIndexRecommendations(c, add)
+	crdbUnusedIndexes(c, add)
+	crdbTableFindings(c, add)
+	crdbClusterHealth(c, add)
+	crdbStorageFindings(c, add)
+	crdbDistributionFindings(c, add)
+	crdbJobFindings(c, add)
+	crdbContentionFindings(c, add)
+}
+
+func crdbStorageFindings(c *model.Context, add func(model.Finding)) {
+	if c.Health == nil || c.Health.Cockroach == nil {
+		return
+	}
+	s := &c.Health.Cockroach.Storage
+	if s.Exactness == "" || s.Exactness == model.ExactnessUnavailable {
+		return
+	}
+
+	var externalEvidence, externalObjects []string
+	for _, store := range s.Stores {
+		usedRatio := safeFindingRatio(float64(store.FilesystemUsedBytes), float64(store.CapacityBytes))
+		if store.Status != "live" || usedRatio < crdbExternalDiskUsedMin || store.OtherUsedRatio < crdbExternalDiskRatioMin || store.OtherUsedBytes < crdbExternalDiskBytesMin {
+			continue
+		}
+		externalEvidence = append(externalEvidence, fmt.Sprintf("s%d/n%d · filesystem %.1f%% used · CockroachDB %s · other use/overhead %s (%.1f%%)",
+			store.StoreID, store.NodeID, usedRatio*100, humanBytes(store.CockroachUsedBytes), humanBytes(store.OtherUsedBytes), store.OtherUsedRatio*100))
+		externalObjects = append(externalObjects, fmt.Sprintf("store:s%d", store.StoreID))
+	}
+	if len(externalEvidence) > 0 {
+		add(model.Finding{
+			ID: "crdb_external_disk_usage", Severity: model.SeverityWarn, ClusterScoped: true,
+			Title:       fmt.Sprintf("%d full CockroachDB store volume(s) contain substantial non-CockroachDB usage", len(externalEvidence)),
+			Detail:      "Filesystem usage materially exceeds CockroachDB's own capacity.used metric on these already-full volumes. Another process, retained files, filesystem overhead, or storage accounting outside the active CockroachDB store may be consuming the missing headroom.",
+			Evidence:    externalEvidence,
+			Objects:     externalObjects,
+			Remediation: "Inspect filesystem usage on the affected nodes and mount points. Remove or relocate only confirmed non-CockroachDB data; do not manually delete files inside an active CockroachDB store. Add capacity if the extra usage is legitimate.",
+			Impact:      impact(model.DimRisk, 80, humanBytes(s.OtherUsedBytes)+" non-CockroachDB use or filesystem overhead cluster-wide", "filesystem used bytes minus CockroachDB capacity.used on live stores"),
+			Confidence:  0.9,
+			Caveats:     []string{"the difference can include filesystem metadata, reserved space, snapshots, or accounting lag; pgbot cannot identify files or their owner"},
+		})
+	}
+
+	if s.CounterSampledStores > 0 && (s.DiskSlowEvents > 0 || s.DiskStalledEvents > 0 || s.DiskUnhealthySeconds > 0 || s.WriteStallEvents > 0 || s.WriteStallSeconds > 0) {
+		severity := model.SeverityWarn
+		if s.DiskStalledEvents > 0 {
+			severity = model.SeverityCritical
+		}
+		var evidence, objects []string
+		for _, store := range s.Stores {
+			if store.DiskSlowEvents == 0 && store.DiskStalledEvents == 0 && store.DiskUnhealthySeconds == 0 && store.WriteStallEvents == 0 && store.WriteStallSeconds == 0 {
+				continue
+			}
+			evidence = append(evidence, fmt.Sprintf("s%d/n%d · %d slow · %d stalled · %.2fs unhealthy · %d write stalls / %.2fs",
+				store.StoreID, store.NodeID, store.DiskSlowEvents, store.DiskStalledEvents, store.DiskUnhealthySeconds, store.WriteStallEvents, store.WriteStallSeconds))
+			objects = append(objects, fmt.Sprintf("store:s%d", store.StoreID))
+		}
+		add(model.Finding{
+			ID: "crdb_storage_stall", Severity: severity, ClusterScoped: true,
+			Title:       "CockroachDB observed storage-engine stalls during the sample",
+			Detail:      "Disk operations crossed CockroachDB's slow or stalled thresholds, or Pebble deliberately stalled writes to protect the storage engine. Sustained stalls directly increase KV and SQL latency and can destabilize Raft replication.",
+			Evidence:    evidence,
+			Objects:     objects,
+			Remediation: "Inspect disk latency, bandwidth, IOPS, filesystem and cloud-volume health on the affected nodes. Correlate with L0/compaction pressure and write workload before resizing or replacing storage.",
+			Impact:      impact(model.DimLatency, 90, fmt.Sprintf("%d slow, %d stalled, %.2fs write-stalled over %.2fs", s.DiskSlowEvents, s.DiskStalledEvents, s.WriteStallSeconds, s.SampleSeconds), "Admin API counter deltas across the pgbot sample"),
+			Confidence:  1,
+			Caveats:     []string{"the sample is short; a clean run does not prove there were no stalls before or after it"},
+		})
+	}
+
+	uninitializedRatio := safeFindingRatio(float64(s.UninitializedReplicas), float64(s.RangeReplicas))
+	if s.ReplicationMetricsAvailable && ((s.UninitializedReplicas >= crdbUninitializedMin && uninitializedRatio >= crdbUninitializedRatioMin) ||
+		s.ReplicateQueuePurgatory >= crdbReplicaPurgatoryMin || s.RaftSnapshotQueuePending >= crdbSnapshotQueueMin) {
+		var evidence, objects []string
+		evidence = append(evidence, fmt.Sprintf("%s uninitialized / %s initialized replicas (%.1f%%) · %s reserved · %s replicate-queue purgatory · %s snapshot-queue pending",
+			human(s.UninitializedReplicas), human(s.RangeReplicas), uninitializedRatio*100, human(s.ReservedReplicas), human(s.ReplicateQueuePurgatory), human(s.RaftSnapshotQueuePending)))
+		stores := append([]model.CockroachStoreStorage(nil), s.Stores...)
+		sort.Slice(stores, func(i, j int) bool { return stores[i].UninitializedReplicas > stores[j].UninitializedReplicas })
+		for _, store := range stores {
+			if store.Status != "live" || (store.UninitializedReplicas == 0 && store.ReplicateQueuePurgatory == 0 && store.RaftSnapshotQueuePending == 0) {
+				continue
+			}
+			evidence = append(evidence, fmt.Sprintf("s%d/n%d · %d uninitialized · %d reserved · queue %d pending / %d purgatory · %d snapshot pending",
+				store.StoreID, store.NodeID, store.UninitializedReplicas, store.ReservedReplicas, store.ReplicateQueuePending, store.ReplicateQueuePurgatory, store.RaftSnapshotQueuePending))
+			objects = append(objects, fmt.Sprintf("store:s%d", store.StoreID))
+			if len(evidence) == 6 {
+				break
+			}
+		}
+		add(model.Finding{
+			ID: "crdb_replication_recovery", Severity: model.SeverityWarn, ClusterScoped: true,
+			Title:       fmt.Sprintf("%s CockroachDB replicas are uninitialized or blocked in recovery", human(s.UninitializedReplicas)),
+			Detail:      "A material share of replicas has not initialized, or repair work is waiting in replication purgatory or the snapshot queue. This commonly accompanies node recovery, rebalancing, or a placement constraint that prevents repair.",
+			Evidence:    evidence,
+			Objects:     objects,
+			Remediation: "Check node liveness, snapshot traffic, store capacity, allocator logs, and zone constraints. Restore the blocking resource or make constraints satisfiable, then allow CockroachDB to complete recovery automatically.",
+			Impact:      impact(model.DimRisk, 75, fmt.Sprintf("%.1f%% uninitialized replicas", uninitializedRatio*100), "live-store replication gauges from the Admin API"),
+			Confidence:  0.85,
+			Caveats:     []string{"a point-in-time recovery backlog can be expected immediately after adding, restarting, or decommissioning nodes; confirm that it is falling on repeated runs"},
+		})
+	}
+
+	flowThreshold := math.Max(10, float64(s.RangeReplicas)*crdbRaftFlowRatioWarn)
+	droppedPerSec := safeFindingRatio(float64(s.RaftDroppedMessages), s.SampleSeconds)
+	if s.MaxRaftCommandsPending >= crdbRaftPendingStoreWarn || float64(s.RaftProbeFlows+s.RaftSnapshotFlows) >= flowThreshold || droppedPerSec >= crdbRaftDroppedPerSecWarn {
+		add(model.Finding{
+			ID: "crdb_raft_backlog", Severity: model.SeverityWarn, ClusterScoped: true,
+			Title:  "CockroachDB Raft replication is showing a material backlog",
+			Detail: "Pending proposals, follower flows in probe/snapshot state, or dropped Raft messages indicate replicas are struggling to keep up with leaders. This can increase commit latency and eventually reduce availability if it persists.",
+			Evidence: []string{fmt.Sprintf("%d commands pending · busiest s%d has %d · %d probe flows · %d snapshot flows · %d dropped messages over %.2fs",
+				s.RaftCommandsPending, s.MaxRaftPendingStoreID, s.MaxRaftCommandsPending, s.RaftProbeFlows, s.RaftSnapshotFlows, s.RaftDroppedMessages, s.SampleSeconds)},
+			Objects:     []string{fmt.Sprintf("store:s%d", s.MaxRaftPendingStoreID)},
+			Remediation: "Inspect the busiest store's disk and network latency, Raft scheduler latency, snapshots, and node health. Address the underlying resource or connectivity problem before attempting manual replica changes.",
+			Impact:      impact(model.DimLatency, 75, fmt.Sprintf("%d pending commands; %.1f dropped messages/s", s.RaftCommandsPending, droppedPerSec), "Admin API Raft gauges and sampled counter deltas"),
+			Confidence:  0.85,
+			Caveats:     []string{"brief probe or snapshot states are normal during replica changes; repeated runs distinguish transient repair from sustained lag"},
+		})
+	}
+
+	if s.LiveStores >= crdbBalanceMinStores && s.BytesPerReplicaMean >= crdbReplicaBytesMeanMin &&
+		s.BytesPerReplicaMax/s.BytesPerReplicaMean >= crdbReplicaBytesMaxMean &&
+		s.BytesPerReplicaMin/s.BytesPerReplicaMean <= crdbReplicaBytesMinMean {
+		add(model.Finding{
+			ID: "crdb_replica_size_skew", Severity: model.SeverityWarn, ClusterScoped: true,
+			Title:  "Average MVCC bytes per replica are heavily skewed across live stores",
+			Detail: "Replica counts can look balanced while a few stores own much larger ranges. Persistent byte skew concentrates storage, snapshot cost, and compaction work even when the number of replicas is even.",
+			Evidence: []string{
+				cockroachStorageEvidence(s, s.LargestReplicaBytesStoreID, "largest replicas"),
+				cockroachStorageEvidence(s, s.SmallestReplicaBytesStoreID, "smallest replicas"),
+			},
+			Objects:     []string{fmt.Sprintf("store:s%d", s.LargestReplicaBytesStoreID), fmt.Sprintf("store:s%d", s.SmallestReplicaBytesStoreID)},
+			Remediation: "Check range sizes, table/index placement, zone constraints, and split/rebalance activity. Correct persistent placement blockers and allow CockroachDB to split or rebalance ranges automatically.",
+			Impact:      impact(model.DimStorage, 65, fmt.Sprintf("%s–%s MVCC bytes per replica", humanBytes(int64(s.BytesPerReplicaMin)), humanBytes(int64(s.BytesPerReplicaMax))), "logical MVCC total bytes divided by initialized replicas on live stores"),
+			Confidence:  0.8,
+			Caveats:     []string{"MVCC bytes are logical replicated bytes, not compressed on-disk bytes; locality constraints can intentionally create different range-size distributions"},
+		})
+	}
+}
+
+func cockroachStorageEvidence(s *model.CockroachStorage, storeID int, label string) string {
+	for _, store := range s.Stores {
+		if store.StoreID == storeID {
+			return fmt.Sprintf("%s s%d/n%d · %s per replica · %s total MVCC · %d replicas · %s",
+				label, store.StoreID, store.NodeID, humanBytes(int64(store.BytesPerReplica)), humanBytes(store.MVCCTotalBytes), store.RangeReplicas, orText(store.Locality, "locality unknown"))
+		}
+	}
+	return fmt.Sprintf("%s s%d", label, storeID)
+}
+
+func safeFindingRatio(numerator, denominator float64) float64 {
+	if denominator <= 0 {
+		return 0
+	}
+	return numerator / denominator
+}
+
+func crdbDistributionFindings(c *model.Context, add func(model.Finding)) {
+	if c.Health == nil || c.Health.Cockroach == nil {
+		return
+	}
+	h := c.Health.Cockroach
+	d := &h.Distribution
+	if d.Exactness == "" || d.Exactness == model.ExactnessUnavailable {
+		return
+	}
+	caveats := []string{"zone constraints, store attributes, and multi-region placement can intentionally produce an uneven distribution; confirm the configured topology before changing it"}
+	if d.MultipleLocalities {
+		caveats = append(caveats, "the compared stores span multiple localities, so lease preferences or survival goals may explain part of the skew")
+	}
+	if d.ComparableStores >= crdbBalanceMinStores && d.ReplicaMean >= crdbReplicaMeanMin &&
+		d.ReplicaMax-d.ReplicaMin >= crdbReplicaSpreadMin && d.ReplicaMaxToMean >= crdbReplicaMaxMeanWarn && d.ReplicaMinToMean <= crdbReplicaMinMeanWarn {
+		add(model.Finding{
+			ID: "crdb_replica_imbalance", Severity: model.SeverityWarn, ClusterScoped: true,
+			Title:       "Range replicas are unevenly distributed across comparable live stores",
+			Detail:      "The most-loaded comparable store holds substantially more range replicas than both the live-store mean and the least-loaded peer. Persistent replica skew can concentrate storage, repair work, and KV traffic.",
+			Evidence:    []string{cockroachBalanceEvidence(d, d.MostReplicasStoreID, "most replicas"), cockroachBalanceEvidence(d, d.FewestReplicasStoreID, "fewest replicas")},
+			Objects:     []string{fmt.Sprintf("store:s%d", d.MostReplicasStoreID), fmt.Sprintf("store:s%d", d.FewestReplicasStoreID)},
+			Remediation: "Check allocator and rebalancing status, store health/capacity, and zone constraints. Restore allocator headroom or correct an unsatisfiable constraint, then allow CockroachDB to rebalance automatically.",
+			Impact:      impact(model.DimRisk, 65, fmt.Sprintf("%d–%d replicas across %d comparable stores", d.ReplicaMin, d.ReplicaMax, d.ComparableStores), "per-store range-replica counts on live, similarly sized stores"),
+			Confidence:  0.8, Caveats: caveats,
+		})
+	}
+	if d.ComparableStores >= crdbBalanceMinStores && d.LeaseMean >= crdbLeaseMeanMin &&
+		d.LeaseMax-d.LeaseMin >= crdbLeaseSpreadMin && d.LeaseMaxToMean >= crdbLeaseMaxMeanWarn && d.LeaseMinToMean <= crdbLeaseMinMeanWarn {
+		add(model.Finding{
+			ID: "crdb_leaseholder_imbalance", Severity: model.SeverityInfo, ClusterScoped: true,
+			Title:       "Leaseholders are heavily skewed across comparable live stores",
+			Detail:      "Leaseholders route most reads and coordinate writes. This skew may be an intentional locality preference, but without that intent it can concentrate request coordination on a subset of nodes.",
+			Evidence:    []string{cockroachBalanceEvidence(d, d.MostLeasesStoreID, "most leases"), cockroachBalanceEvidence(d, d.FewestLeasesStoreID, "fewest leases")},
+			Objects:     []string{fmt.Sprintf("store:s%d", d.MostLeasesStoreID), fmt.Sprintf("store:s%d", d.FewestLeasesStoreID)},
+			Remediation: "Verify lease preferences and zone constraints first. If the skew is unintended and persistent, inspect lease rebalancing and node load rather than manually relocating individual leases from a one-time snapshot.",
+			Impact:      impact(model.DimThroughput, 35, fmt.Sprintf("%d–%d leaseholders across %d comparable stores", d.LeaseMin, d.LeaseMax, d.ComparableStores), "per-store leaseholder counts on live, similarly sized stores"),
+			Confidence:  0.65, Caveats: caveats,
+		})
+	}
+	if d.LiveStores >= crdbBalanceMinStores && d.CapacityUsedMaxRatio >= crdbCapacityImbalanceMax && d.CapacityUsedSpread >= crdbCapacitySpreadWarn {
+		add(model.Finding{
+			ID: "crdb_capacity_imbalance", Severity: model.SeverityWarn, ClusterScoped: true,
+			Title:       fmt.Sprintf("Live-store utilization differs by %.1f percentage points", d.CapacityUsedSpread*100),
+			Detail:      "The fullest live store is already materially utilized while another live store has substantially more headroom. Cluster-wide free capacity can hide this local imbalance and reduce allocator flexibility.",
+			Evidence:    []string{cockroachBalanceEvidence(d, d.MostUsedStoreID, "fullest"), cockroachBalanceEvidence(d, d.LeastUsedStoreID, "emptiest")},
+			Objects:     []string{fmt.Sprintf("store:s%d", d.MostUsedStoreID), fmt.Sprintf("store:s%d", d.LeastUsedStoreID)},
+			Remediation: "Check store/node health, replica constraints, decommissioning state, and allocator activity. Correct the blocking condition and let CockroachDB rebalance; add capacity if the fullest store lacks safe headroom.",
+			Impact:      impact(model.DimRisk, 65, fmt.Sprintf("%.1f%%–%.1f%% used across %d live stores", d.CapacityUsedMinRatio*100, d.CapacityUsedMaxRatio*100, d.LiveStores), "per-store used capacity on live nodes"),
+			Confidence:  0.9, Caveats: caveats,
+		})
+	}
+	if d.HotRangeLeaseholderSamples >= crdbHotRangeMinSamples && d.HotRangeCPUCores >= crdbHotRangeMinCPUCores &&
+		d.HottestLeaseholderRanges >= crdbHotRangeLeaderMin && d.HottestLeaseholderCPUShare >= crdbHotRangeShareWarn {
+		evidence := []string{fmt.Sprintf("n%d leaseholds %d/%d attributed top hot ranges · %.3f/%.3f CPU cores (%.1f%%)",
+			d.HottestLeaseholderNodeID, d.HottestLeaseholderRanges, d.HotRangeLeaseholderSamples,
+			d.HottestLeaseholderCPUCores, d.HotRangeCPUCores, d.HottestLeaseholderCPUShare*100)}
+		for _, r := range h.Hot {
+			if r.LeaseholderNodeID != d.HottestLeaseholderNodeID {
+				continue
+			}
+			name := strings.Join(r.Tables, ",")
+			if len(r.Indexes) > 0 {
+				name += "/" + strings.Join(r.Indexes, ",")
+			}
+			evidence = append(evidence, fmt.Sprintf("r%d · %.3f CPU cores · %.1f QPS · %s", r.RangeID, r.CPUCores, r.QPS, orText(name, "object unavailable")))
+			if len(evidence) == 5 {
+				break
+			}
+		}
+		add(model.Finding{
+			ID: "crdb_hot_range_concentration", Severity: model.SeverityWarn, ClusterScoped: true,
+			Title:    fmt.Sprintf("One node leaseholds %.1f%% of sampled top-hot-range CPU", d.HottestLeaseholderCPUShare*100),
+			Detail:   "A single leaseholder node dominates CPU across the bounded top-hot-range sample. This often points to hot keys, concentrated access to one table/index, or lease placement that is not spreading the active workload.",
+			Evidence: evidence, Objects: []string{fmt.Sprintf("node:n%d", d.HottestLeaseholderNodeID)},
+			Remediation: "Correlate the listed ranges with their tables and indexes, distribute hot keys or sequential writes, and verify lease preferences. Rebalance workload or capacity based on sustained observations, not one sample.",
+			Impact:      impact(model.DimThroughput, 70, fmt.Sprintf("%.3f of %.3f sampled CPU cores on n%d", d.HottestLeaseholderCPUCores, d.HotRangeCPUCores, d.HottestLeaseholderNodeID), "CockroachDB bounded top-hot-range sample grouped by leaseholder"),
+			Confidence:  0.85,
+			Caveats:     []string{"the hot-range endpoint is a bounded point-in-time sample, not all ranges; rerun during the incident and confirm in DB Console before changing placement"},
+		})
+	}
+}
+
+func cockroachBalanceEvidence(d *model.CockroachDistribution, storeID int, label string) string {
+	for _, s := range d.Stores {
+		if s.StoreID != storeID {
+			continue
+		}
+		return fmt.Sprintf("%s s%d/n%d · %.1f%% used · %d replicas · %d leases · node CPU %.1f%% · %s",
+			label, s.StoreID, s.NodeID, s.UsedRatio*100, s.RangeReplicas, s.Leaseholders, s.NodeCPUPercent, orText(s.Locality, "locality unknown"))
+	}
+	return fmt.Sprintf("%s s%d", label, storeID)
+}
+
+func crdbContentionFindings(c *model.Context, add func(model.Finding)) {
+	if c.Cockroach == nil || c.Cockroach.Contention.Exactness == model.ExactnessUnavailable {
+		return
+	}
+	h := &c.Cockroach.Contention
+	if h.TotalWaitMS >= crdbContentionTotalWarnMS || h.MaxWaitMS >= crdbContentionMaxWarnMS {
+		var evidence []string
+		for _, x := range h.Hotspots {
+			if x.Type == "SERIALIZATION_CONFLICT" {
+				continue
+			}
+			line := fmt.Sprintf("%s · %s · %d events · %s total · %s max · waiter q:%s",
+				crdbContentionObject(x), x.Type, x.Events, durationMS(x.TotalWaitMS), durationMS(x.MaxWaitMS), x.WaitingStatementFingerprint)
+			if x.BlockingTxnFingerprint != "" {
+				line += " · blocker txn:" + x.BlockingTxnFingerprint
+			} else if x.BlockerResolution == model.CockroachContentionNotResolved {
+				line += " · blocker not resolved by CockroachDB"
+			}
+			if x.WaitingQuery != "" {
+				line += " · waiting query: " + truncate(x.WaitingQuery, 80)
+			}
+			blockingQuery := x.BlockingQuery
+			if blockingQuery == "" && len(x.BlockingQueries) > 0 {
+				blockingQuery = x.BlockingQueries[0]
+			}
+			if blockingQuery != "" {
+				line += " · blocking query: " + truncate(blockingQuery, 80)
+			}
+			evidence = append(evidence, line)
+			if len(evidence) == 5 {
+				break
+			}
+		}
+		add(model.Finding{
+			ID: "crdb_contention_hotspot", Severity: model.SeverityWarn, ClusterScoped: true,
+			Title:       fmt.Sprintf("%d CockroachDB contention events accumulated %s of wait time", h.TotalEvents, durationMS(h.TotalWaitMS)),
+			Detail:      fmt.Sprintf("CockroachDB's bounded contention event store recorded material lock waits during the last %d minutes. Repeated waits on the same table/index usually indicate a hot key or a transaction holding locks for too long.", h.WindowMinutes),
+			Evidence:    evidence,
+			Remediation: "Find the waiting statement and blocking transaction fingerprints in SQL Activity; shorten the holding transaction, access rows in a consistent order, and distribute writes away from hot keys.",
+			Impact:      impact(model.DimLatency, math.Min(95, 45+math.Log10(h.TotalWaitMS+1)*10), fmt.Sprintf("%s total wait; %s longest", durationMS(h.TotalWaitMS), durationMS(h.MaxWaitMS)), "crdb_internal.transaction_contention_events over the last hour"),
+			Confidence:  0.95,
+			Caveats:     []string{"the source is an in-memory LRU, so counts are a lower bound and events can be evicted"},
+		})
+	}
+	if h.SerializationConflicts >= crdbSerializationWarn {
+		var evidence []string
+		for _, x := range h.Hotspots {
+			if x.Type != "SERIALIZATION_CONFLICT" {
+				continue
+			}
+			evidence = append(evidence, fmt.Sprintf("%s · %d conflicts · waiter q:%s", crdbContentionObject(x), x.Events, x.WaitingStatementFingerprint))
+			if len(evidence) == 5 {
+				break
+			}
+		}
+		add(model.Finding{
+			ID: "crdb_serialization_conflicts", Severity: model.SeverityWarn, ClusterScoped: true,
+			Title:  fmt.Sprintf("%d serialization conflicts were recorded in the last hour", h.SerializationConflicts),
+			Detail: "CockroachDB recorded transaction conflicts that can surface as SQLSTATE 40001 or consume work through automatic retries.", Evidence: evidence,
+			Remediation: "Keep transactions small, access rows consistently, avoid read-modify-write hot keys, and ensure the application retries retryable serialization errors with backoff.",
+			Impact:      impact(model.DimThroughput, math.Min(90, 45+math.Log10(float64(h.SerializationConflicts)+1)*15), fmt.Sprintf("%d conflicts", h.SerializationConflicts), "SERIALIZATION_CONFLICT events in the CockroachDB contention store"), Confidence: 0.95,
+		})
+	}
+}
+
+func crdbContentionObject(h model.CockroachContentionHotspot) string {
+	parts := []string{h.Database, h.Schema, h.Table}
+	name := strings.Join(parts, ".")
+	if h.Index != "" {
+		name += "/" + h.Index
+	}
+	return name
+}
+
+func durationMS(ms float64) string {
+	if ms <= 0 {
+		return "0s"
+	}
+	return (time.Duration(ms * float64(time.Millisecond))).Round(time.Millisecond).String()
+}
+
+func crdbClusterHealth(c *model.Context, add func(model.Finding)) {
+	if c.Health == nil || c.Health.Cockroach == nil {
+		return
+	}
+	h := c.Health.Cockroach
+	if h.NodesSuspect > 0 {
+		var evidence []string
+		for _, n := range h.Nodes {
+			if n.Status != "live" && n.Status != "draining" && n.Status != "decommissioning" && n.Status != "decommissioned" {
+				evidence = append(evidence, fmt.Sprintf("n%d · %s · %s", n.NodeID, n.Status, orText(n.Locality, "locality unknown")))
+			}
+		}
+		add(model.Finding{
+			ID: "crdb_node_unavailable", Severity: model.SeverityCritical, ClusterScoped: true,
+			Title:    fmt.Sprintf("%d CockroachDB node(s) are not live", h.NodesSuspect),
+			Detail:   "The Admin API reports one or more nodes as dead, unavailable, or unknown. The cluster may have lost replica redundancy or serving capacity.",
+			Evidence: evidence, Remediation: "Check node process/network health and the DB Console node-liveness view; recover the node or follow the documented decommission/replacement procedure.",
+			Impact: impact(model.DimRisk, 95, fmt.Sprintf("%d/%d nodes suspect", h.NodesSuspect, h.NodesTotal), "CockroachDB Admin API node liveness"), Confidence: 1,
+		})
+	}
+	if h.UnavailableRanges > 0 {
+		add(model.Finding{
+			ID: "crdb_ranges_unavailable", Severity: model.SeverityCritical, ClusterScoped: true,
+			Title:       fmt.Sprintf("%d range replica(s) report unavailable", h.UnavailableRanges),
+			Detail:      "Unavailable ranges cannot reach quorum and may reject reads or writes for the affected keyspace.",
+			Evidence:    []string{fmt.Sprintf("%d unavailable across %d stores", h.UnavailableRanges, h.StoresTotal)},
+			Remediation: "Use the DB Console replication and range reports to identify affected ranges and missing replicas; restore node connectivity before considering replica surgery.",
+			Impact:      impact(model.DimRisk, 100, fmt.Sprintf("%d unavailable range replicas", h.UnavailableRanges), "sum of store ranges.unavailable metrics"), Confidence: 1,
+		})
+	}
+	if h.UnderreplicatedRanges > 0 {
+		add(model.Finding{
+			ID: "crdb_ranges_underreplicated", Severity: model.SeverityWarn, ClusterScoped: true,
+			Title:       fmt.Sprintf("%d range replica(s) are under-replicated", h.UnderreplicatedRanges),
+			Detail:      "Under-replicated ranges have less failure tolerance than their configured replication target.",
+			Evidence:    []string{fmt.Sprintf("%d under-replicated across %d stores", h.UnderreplicatedRanges, h.StoresTotal)},
+			Remediation: "Check node liveness, store capacity, allocator/rebalancing status, and zone constraints; allow replication to recover before planned maintenance.",
+			Impact:      impact(model.DimRisk, 80, fmt.Sprintf("%d under-replicated range replicas", h.UnderreplicatedRanges), "sum of store ranges.underreplicated metrics"), Confidence: 1,
+		})
+	}
+	if h.MaxStoreUsedRatio >= crdbStoreWarn {
+		severity := model.SeverityWarn
+		if h.MaxStoreUsedRatio >= crdbStoreCrit {
+			severity = model.SeverityCritical
+		}
+		add(model.Finding{
+			ID: "crdb_store_capacity", Severity: severity, ClusterScoped: true,
+			Title:    fmt.Sprintf("CockroachDB's fullest store is %.1f%% used", h.MaxStoreUsedRatio*100),
+			Detail:   "A full store reduces allocator headroom and can eventually prevent writes. Cluster-wide free space can hide one locally full store.",
+			Evidence: fullestStoreEvidence(h.Stores), Remediation: "Add capacity or nodes, remove obsolete data, and verify range rebalancing and locality constraints before the store reaches the hard limit.",
+			Impact: impact(model.DimRisk, math.Min(100, 55+h.MaxStoreUsedRatio*45), fmt.Sprintf("%.1f%% used on fullest store", h.MaxStoreUsedRatio*100), "CockroachDB Admin API per-store capacity"), Confidence: 1,
+		})
+	}
+	var pressure []string
+	if h.MaxCPUPercent >= crdbCPUWarn {
+		pressure = append(pressure, fmt.Sprintf("peak node CPU %.1f%%", h.MaxCPUPercent))
+	}
+	if h.MaxMemoryUsedRatio >= crdbMemoryWarn {
+		pressure = append(pressure, fmt.Sprintf("peak node RSS %.1f%% of system memory", h.MaxMemoryUsedRatio*100))
+	}
+	if h.AdmissionWaitP99MS >= crdbAdmissionWarnMS {
+		pressure = append(pressure, fmt.Sprintf("admission wait p99 %.1fms", h.AdmissionWaitP99MS))
+	}
+	if len(pressure) > 0 {
+		add(model.Finding{
+			ID: "crdb_resource_pressure", Severity: model.SeverityWarn, ClusterScoped: true,
+			Title: "CockroachDB is showing resource or admission pressure", Detail: "High node utilization or admission delay indicates demand is approaching available CPU or memory capacity.",
+			Evidence: pressure, Remediation: "Correlate the pressured node with SQL fingerprints and hottest ranges; reduce the dominant workload, rebalance hot ranges, or add capacity.",
+			Impact: impact(model.DimThroughput, 75, strings.Join(pressure, "; "), "Admin API node resource and admission-control metrics"), Confidence: 0.9,
+		})
+	}
+	versions := map[string]bool{}
+	for _, n := range h.Nodes {
+		if n.Version != "" && n.Status != "decommissioned" {
+			versions[n.Version] = true
+		}
+	}
+	if len(versions) > 1 {
+		var values []string
+		for v := range versions {
+			values = append(values, v)
+		}
+		sort.Strings(values)
+		add(model.Finding{
+			ID: "crdb_version_skew", Severity: model.SeverityWarn, ClusterScoped: true,
+			Title: fmt.Sprintf("CockroachDB nodes run %d different versions", len(values)), Detail: "Version skew is expected during a rolling upgrade but should not remain indefinitely.",
+			Evidence: []string{strings.Join(values, ", ")}, Remediation: "Confirm a rolling upgrade is in progress and finish it within CockroachDB's supported upgrade path; do not finalize until every intended node is healthy.",
+			Impact: impact(model.DimRisk, 55, fmt.Sprintf("%d versions", len(values)), "Admin API node build tags"), Confidence: 1,
+		})
+	}
+}
+
+func crdbJobFindings(c *model.Context, add func(model.Finding)) {
+	if c.Health == nil || c.Health.Cockroach == nil || c.Health.Cockroach.Jobs.Exactness == "" || c.Health.Cockroach.Jobs.Exactness == model.ExactnessUnavailable {
+		return
+	}
+	var failed, stalled, reverting, paused []string
+	var failedObjects, stalledObjects, revertingObjects, pausedObjects []string
+	revertFailed := false
+	for _, j := range c.Health.Cockroach.JobItems {
+		object := "job:" + j.JobID
+		evidence := crdbJobEvidence(j, c.CollectedAt)
+		switch j.State {
+		case "failed", "revert-failed":
+			failed = append(failed, evidence)
+			failedObjects = append(failedObjects, object)
+			revertFailed = revertFailed || j.State == "revert-failed"
+		case "paused":
+			paused = append(paused, evidence)
+			pausedObjects = append(pausedObjects, object)
+		default:
+			if cockroachJobStalled(j, c.CollectedAt) {
+				stalled = append(stalled, evidence)
+				stalledObjects = append(stalledObjects, object)
+			} else if j.State == "reverting" {
+				reverting = append(reverting, evidence)
+				revertingObjects = append(revertingObjects, object)
+			}
+		}
+	}
+	if len(failed) > 0 {
+		severity := model.SeverityWarn
+		score := 70.0
+		if revertFailed {
+			severity = model.SeverityCritical
+			score = 90
+		}
+		add(model.Finding{
+			ID: "crdb_job_failed", Severity: severity, ClusterScoped: true,
+			Title:    fmt.Sprintf("%d recent CockroachDB job(s) failed", len(failed)),
+			Detail:   "Failed schema-change, backup, restore, import, changefeed, or maintenance jobs can leave an operation incomplete. A revert-failed state means CockroachDB also failed to clean up the original operation.",
+			Evidence: cap10(failed), Objects: failedObjects,
+			Remediation: "Inspect SHOW JOB <id> for the full error and job-specific retry guidance, correct the underlying cause, then retry or resume only when the operation supports it.",
+			Impact:      impact(model.DimRisk, score, fmt.Sprintf("%d recent failed jobs", len(failed)), "information_schema.crdb_jobs_with_progress; revert-failed is critical"), Confidence: 1,
+		})
+	}
+	if len(stalled) > 0 {
+		add(model.Finding{
+			ID: "crdb_job_stalled", Severity: model.SeverityWarn, ClusterScoped: true,
+			Title:    fmt.Sprintf("%d CockroachDB job(s) have not reported progress for at least 30 minutes", len(stalled)),
+			Detail:   "A running, pending, reverting, pause-requested, or cancel-requested job has not updated its progress or status timestamp. This can indicate admission pressure, an unavailable dependency, a stuck coordinator, or cleanup that cannot advance.",
+			Evidence: cap10(stalled), Objects: stalledObjects,
+			Remediation: "Inspect SHOW JOB <id>, DB Console job details, node liveness, admission pressure, and the job's external dependency. Do not cancel or retry it until its current state and operation-specific recovery semantics are understood.",
+			Impact:      impact(model.DimRisk, 75, fmt.Sprintf("%d jobs without an update for at least 30 minutes", len(stalled)), "last_updated (or created when no progress row exists) from information_schema.crdb_jobs_with_progress"),
+			Confidence:  0.85,
+			Caveats:     []string{"some jobs update progress in coarse steps; pgbot requires a 30-minute silent period and does not flag duration alone"},
+		})
+	}
+	if len(reverting) > 0 {
+		add(model.Finding{
+			ID: "crdb_job_reverting", Severity: model.SeverityInfo, ClusterScoped: true,
+			Title:    fmt.Sprintf("%d CockroachDB job(s) are reverting", len(reverting)),
+			Detail:   "CockroachDB is actively undoing an operation that did not complete. A recently updating revert is not classified as stalled, but the original operation still failed and may need follow-up after cleanup finishes.",
+			Evidence: cap10(reverting), Objects: revertingObjects,
+			Remediation: "Let the revert complete while monitoring its progress. Then inspect the original job error and correct the cause before retrying the operation.",
+			Impact:      impact(model.DimRisk, 35, fmt.Sprintf("%d jobs reverting", len(reverting)), "current CockroachDB job state and recent progress timestamp"), Confidence: 1,
+		})
+	}
+	if len(paused) > 0 {
+		add(model.Finding{
+			ID: "crdb_job_paused", Severity: model.SeverityInfo, ClusterScoped: true,
+			Title:    fmt.Sprintf("%d CockroachDB job(s) are paused", len(paused)),
+			Detail:   "Paused jobs make no progress until resumed or canceled. This may be intentional, especially for changefeeds, but it can also leave a schema, backup, restore, import, or maintenance operation incomplete.",
+			Evidence: cap10(paused), Objects: pausedObjects,
+			Remediation: "Confirm the pause is intentional and has an owner. Resume or cancel the job only after checking its type-specific operational consequences.",
+			Impact:      impact(model.DimRisk, 20, fmt.Sprintf("%d paused jobs", len(paused)), "current CockroachDB job state"), Confidence: 1,
+		})
+	}
+}
+
+func cockroachJobStalled(j model.CockroachJobHealth, collectedAt time.Time) bool {
+	switch j.State {
+	case "running", "pending", "reverting", "pause-requested", "cancel-requested":
+	default:
+		return false
+	}
+	if cockroachJobExpectedSilent(j.Type) {
+		return false
+	}
+	if collectedAt.IsZero() {
+		return false
+	}
+	last := j.CreatedAt
+	if j.LastUpdatedAt != nil && !j.LastUpdatedAt.IsZero() {
+		last = *j.LastUpdatedAt
+	}
+	return !last.IsZero() && collectedAt.Sub(last) >= time.Duration(crdbJobStalledSec)*time.Second
+}
+
+func cockroachJobExpectedSilent(jobType string) bool {
+	switch strings.ToUpper(strings.TrimSpace(jobType)) {
+	case "SCHEMA CHANGE GC",
+		"AUTO SPAN CONFIG RECONCILIATION",
+		"POLL JOBS STATS",
+		"AUTO CONFIG RUNNER",
+		"AUTO CONFIG ENV RUNNER",
+		"AUTO CONFIG TASK",
+		"KEY VISUALIZER",
+		"AUTO UPDATE SQL ACTIVITY",
+		"MVCC STATISTICS UPDATE",
+		"UPDATE TABLE METADATA CACHE",
+		"SQL ACTIVITY FLUSH",
+		"HOT RANGES LOGGER",
+		"AUTO ASH COMPACTION":
+		return true
+	default:
+		return false
+	}
+}
+
+func crdbJobEvidence(j model.CockroachJobHealth, collectedAt time.Time) string {
+	parts := []string{"job " + j.JobID, orText(j.Type, "type unknown"), orText(j.State, "state unknown")}
+	if j.ProgressKnown {
+		parts = append(parts, fmt.Sprintf("%.1f%%", j.Progress*100))
+	}
+	if !j.CreatedAt.IsZero() && !collectedAt.IsZero() {
+		parts = append(parts, "age "+shortDur(max(0, int64(collectedAt.Sub(j.CreatedAt).Seconds()))))
+	}
+	if j.LastUpdatedAt != nil && !collectedAt.IsZero() {
+		parts = append(parts, "last update "+shortDur(max(0, int64(collectedAt.Sub(*j.LastUpdatedAt).Seconds())))+" ago")
+	}
+	if j.StatusMessage != "" {
+		parts = append(parts, "status: "+truncate(j.StatusMessage, 100))
+	}
+	if j.Error != "" {
+		parts = append(parts, "error: "+truncate(j.Error, 120))
+	}
+	if j.Operation != "" {
+		parts = append(parts, truncate(j.Operation, 140))
+	}
+	return strings.Join(parts, " · ")
+}
+
+func fullestStoreEvidence(stores []model.CockroachStoreHealth) []string {
+	if len(stores) == 0 {
+		return nil
+	}
+	worst := stores[0]
+	for _, s := range stores[1:] {
+		if s.UsedRatio > worst.UsedRatio {
+			worst = s
+		}
+	}
+	return []string{fmt.Sprintf("n%d/s%d · %.1f%% used · %s available", worst.NodeID, worst.StoreID, worst.UsedRatio*100, humanBytes(worst.AvailableBytes))}
+}
+
+func crdbLongRunningQueries(c *model.Context, add func(model.Finding)) {
+	if c.Cockroach == nil {
+		return
+	}
+	var evidence []string
+	var longest float64
+	for _, q := range c.Cockroach.LiveQueries.Items {
+		if q.AgeSec < crdbLongQuerySec {
+			continue
+		}
+		longest = math.Max(longest, q.AgeSec)
+		evidence = append(evidence, fmt.Sprintf("%s · app %s · running %.0fs · phase %s · %s",
+			truncate(q.Query, 80), orText(q.AppName, "(none)"), q.AgeSec, orText(q.Phase, "unknown"),
+			map[bool]string{true: "full scan", false: "no full scan reported"}[q.FullScan]))
+	}
+	if len(evidence) == 0 {
+		return
+	}
+	add(model.Finding{
+		ID: "crdb_long_running_query", Severity: model.SeverityWarn, ClusterScoped: true,
+		Title:       fmt.Sprintf("%d CockroachDB query(s) running over one minute", len(evidence)),
+		Detail:      "These statements were still executing when pgbot sampled SHOW CLUSTER QUERIES. Long runtime can be expected for analytical work, but it can also signal a full scan, contention, or a stalled client request.",
+		Evidence:    evidence,
+		Remediation: "Inspect the query in the CockroachDB SQL Activity page and run EXPLAIN (DISTSQL) with representative parameters; cancel it only after confirming the owning application no longer needs it.",
+		Impact:      impact(model.DimLatency, math.Min(85, 35+longest/15), fmt.Sprintf("longest running %.0fs", longest), "SHOW CLUSTER QUERIES start time"),
+		Confidence:  0.9,
+		Caveats:     []string{"a long analytical or maintenance query may be intentional"},
+	})
+}
+
+func crdbRetryHotspots(c *model.Context, add func(model.Finding)) {
+	var evidence, objects []string
+	var worst int64
+	if c.Queries != nil && c.Queries.Enabled {
+		for _, q := range c.Queries.Top {
+			if q.MaxRetries < crdbRetryHotspotMin {
+				continue
+			}
+			worst = max(worst, q.MaxRetries)
+			evidence = append(evidence, fmt.Sprintf("persisted max %d retries · app %s · %.1fms mean · %.1fms contention · %s",
+				q.MaxRetries, orText(q.AppName, "(none)"), q.MeanMS, q.ContentionMS, truncate(q.Query, 80)))
+			objects = append(objects, crdbQueryObject(q.Fingerprint, q.QueryID))
+		}
+	}
+	if c.Cockroach != nil {
+		for _, q := range c.Cockroach.LiveQueries.Items {
+			retries := max(q.Retries, q.AutoRetries)
+			if retries < crdbRetryHotspotMin {
+				continue
+			}
+			worst = max(worst, retries)
+			evidence = append(evidence, fmt.Sprintf("live now · %d retries · app %s · running %.1fs · %s",
+				retries, orText(q.AppName, "(none)"), q.AgeSec, truncate(q.Query, 80)))
+			if q.QueryID != "" {
+				objects = append(objects, "q:live:"+q.QueryID)
+			}
+		}
+	}
+	if len(evidence) == 0 {
+		return
+	}
+	add(model.Finding{
+		ID: "crdb_retry_hotspot", Severity: model.SeverityWarn,
+		Title:    fmt.Sprintf("%d CockroachDB query execution(s) needed repeated retries", len(evidence)),
+		Detail:   "CockroachDB reported repeated retries in live queries or persisted statement statistics. Automatic serializable retries add latency and consume work that is later discarded; hot keys or broad transactions are common causes.",
+		Evidence: evidence, Objects: objects,
+		Remediation: "Use the transaction execution insights and contention details to identify the contended keys; keep transactions small, access rows in a consistent order, and add application retry handling for errors CockroachDB cannot auto-retry.",
+		Impact:      impact(model.DimThroughput, math.Min(85, 35+float64(worst)*4), fmt.Sprintf("up to %d retries", worst), "SHOW CLUSTER QUERIES and persisted statement statistics"),
+		Confidence:  0.85,
+	})
+}
+
+func crdbExecutionInsights(c *model.Context, add func(model.Finding)) {
+	if c.Cockroach == nil {
+		return
+	}
+	var evidence, objects []string
+	var worstMS float64
+	for _, in := range c.Cockroach.ExecutionInsights.Items {
+		if in.Problem == "" || in.Problem == "None" || in.Problem == "TransactionInsight" {
+			continue
+		}
+		worstMS = math.Max(worstMS, in.ServiceLatencyMS)
+		cause := strings.Join(in.Causes, ", ")
+		if cause == "" {
+			cause = "cause not classified"
+		}
+		evidence = append(evidence, fmt.Sprintf("%s %s · %s · %s · %.1fms · %d retries · %s",
+			in.Kind, in.Problem, cause, orText(in.AppName, "(none)"), in.ServiceLatencyMS, in.Retries, truncate(in.Query, 80)))
+		objects = append(objects, "q:"+orText(in.Fingerprint, "unknown"))
+	}
+	if len(evidence) == 0 {
+		return
+	}
+	add(model.Finding{
+		ID: "crdb_execution_insights", Severity: model.SeverityWarn,
+		Title:    fmt.Sprintf("%d recent CockroachDB execution insight(s) need attention", len(evidence)),
+		Detail:   "CockroachDB classified these executions as slow or failed and recorded their likely causes, including plan regressions, suboptimal plans, contention, or high retry counts.",
+		Evidence: evidence, Objects: objects,
+		Remediation: "Open SQL Activity → Insights for the recorded execution, inspect its plan and contention details, then address the classified cause rather than tuning a cluster-wide setting blindly.",
+		Impact:      impact(model.DimLatency, math.Min(90, 50+worstMS/200), fmt.Sprintf("%d recorded problematic executions", len(evidence)), "CockroachDB persisted execution insights"),
+		Confidence:  0.95,
+	})
+}
+
+func crdbIndexRecommendations(c *model.Context, add func(model.Finding)) {
+	if c.Cockroach == nil {
+		return
+	}
+	seen := map[string]bool{}
+	var evidence, objects []string
+	for _, in := range c.Cockroach.ExecutionInsights.Items {
+		for _, rec := range in.IndexRecommendations {
+			key := in.Fingerprint + "\x00" + rec
+			if rec == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			evidence = append(evidence, fmt.Sprintf("app %s · %s · %s", orText(in.AppName, "(none)"), truncate(in.Query, 70), rec))
+			objects = append(objects, "q:"+orText(in.Fingerprint, "unknown"))
+		}
+	}
+	if len(evidence) == 0 {
+		return
+	}
+	add(model.Finding{
+		ID: "crdb_index_recommendations", Severity: model.SeverityInfo,
+		Title:    fmt.Sprintf("%d CockroachDB index recommendation(s) recorded", len(evidence)),
+		Detail:   "CockroachDB's optimizer attached index recommendations to problematic statement executions. They are candidates, not instructions to execute automatically.",
+		Evidence: evidence, Objects: objects,
+		Remediation: "Validate each recommendation with EXPLAIN on representative queries, check for overlap with existing indexes, and estimate write/storage cost before creating it.",
+		Impact:      impact(model.DimLatency, 35, fmt.Sprintf("%d candidate indexes", len(evidence)), "CockroachDB statement execution insights"),
+		Confidence:  0.75,
+		Caveats:     []string{"an index can reduce read latency while increasing write amplification and storage"},
+	})
+}
+
+func crdbUnusedIndexes(c *model.Context, add func(model.Finding)) {
+	if c.Indexes == nil || c.Indexes.Exactness == model.ExactnessUnavailable || len(c.Indexes.Unused) == 0 {
+		return
+	}
+	thresholdHours := c.Indexes.UnusedThresholdHours
+	if thresholdHours == 0 {
+		thresholdHours = 7 * 24
+	}
+	var evidence, objects []string
+	var totalWrites int64
+	for _, ix := range c.Indexes.Unused {
+		age := shortDur(int64(ix.UnusedForSeconds))
+		line := fmt.Sprintf("%s · no reads for %s · %s reads", cockroachIndexObject(ix), age, human(ix.Scans))
+		if c.Indexes.WriteCountersAvailable {
+			line += " · " + human(ix.Writes) + " writes"
+			totalWrites += ix.Writes
+		}
+		var flags []string
+		if ix.Inverted {
+			flags = append(flags, "inverted")
+		}
+		if ix.Sharded {
+			flags = append(flags, "sharded")
+		}
+		if ix.Invisible {
+			flags = append(flags, "not visible")
+		}
+		if len(flags) > 0 {
+			line += " · " + strings.Join(flags, ", ")
+		}
+		evidence = append(evidence, line)
+		objects = append(objects, ix.Schema+"."+ix.Name)
+	}
+
+	confidence, uptimeCaveat := crdbIndexCounterConfidence(c, time.Duration(thresholdHours)*time.Hour)
+	caveats := []string{
+		"CockroachDB index-usage counters are cluster-wide but in-memory and non-durable; node restarts can erase evidence of reads",
+		"index sizes are not available from this collector, so storage recovery is not estimated",
+	}
+	if uptimeCaveat != "" {
+		caveats = append(caveats, uptimeCaveat)
+	}
+	if !c.Indexes.WriteCountersAvailable {
+		caveats = append(caveats, "this CockroachDB version does not expose index write counters")
+	}
+
+	estimate := fmt.Sprintf("%d aged-unused secondary indexes", len(c.Indexes.Unused))
+	score := 45.0
+	if c.Indexes.WriteCountersAvailable {
+		estimate = fmt.Sprintf("%d secondary indexes maintained across %s writes", len(c.Indexes.Unused), human(totalWrites))
+		score = math.Min(85, score+math.Log10(float64(totalWrites)+1)*8)
+	}
+	add(model.Finding{
+		ID: "crdb_unused_indexes", Severity: model.SeverityWarn,
+		Title:       fmt.Sprintf("%d CockroachDB secondary index(es) unused for at least %s", len(c.Indexes.Unused), shortDur(int64(thresholdHours)*3600)),
+		Detail:      "These non-unique secondary indexes have no recorded reads since their last read or creation time. pgbot applies a conservative seven-day age rule and never classifies primary, unique, or unknown-age indexes as unused.",
+		Evidence:    evidence,
+		Objects:     objects,
+		Remediation: "Validate each candidate across a complete workload cycle in SQL Activity, preserve its DDL, and drop it only after confirming that no interactive, scheduled, or disaster-recovery path needs it.",
+		Impact:      impact(model.DimThroughput, score, estimate, "cluster-wide CockroachDB index usage; non-unique secondary indexes only"),
+		Confidence:  confidence,
+		Caveats:     caveats,
+		Safety: safety(precondition("crdb_unused_index.observation_window", model.ActionDropIndex,
+			"The cluster-wide counters are in-memory, so a node restart or an off-window workload can make a required index appear unused.",
+			"every live node's statistics window covers at least one complete workload cycle, including scheduled and recovery jobs, and SQL Activity shows no reads before DROP INDEX")),
+	})
+}
+
+func crdbTableFindings(c *model.Context, add func(model.Finding)) {
+	if c.Tables == nil || c.Tables.Exactness == model.ExactnessUnavailable {
+		return
+	}
+	var metadataErrors, missingStats, autoStatsOff, mvccGarbage []string
+	var metadataObjects, missingObjects, autoStatsObjects, garbageObjects []string
+	var worstMissingBytes, totalGarbage int64
+	for _, table := range c.Tables.Top {
+		object := table.Schema + "." + table.Name
+		name := cockroachTableObject(table)
+		if table.MetadataError != "" {
+			metadataErrors = append(metadataErrors, fmt.Sprintf("%s · %s", name, truncate(table.MetadataError, 140)))
+			metadataObjects = append(metadataObjects, object)
+		}
+		if table.DataBytes >= crdbStatsTableMinBytes && table.StatsLastUpdated == nil {
+			state := "automatic stats enabled"
+			if !table.AutoStatsEnabled {
+				state = "automatic stats disabled"
+			}
+			missingStats = append(missingStats, fmt.Sprintf("%s · %s MVCC data · %s", name, humanBytes(table.DataBytes), state))
+			missingObjects = append(missingObjects, object)
+			worstMissingBytes = max(worstMissingBytes, table.DataBytes)
+		}
+		if table.DataBytes >= crdbStatsTableMinBytes && !table.AutoStatsEnabled {
+			autoStatsOff = append(autoStatsOff, fmt.Sprintf("%s · %s MVCC data", name, humanBytes(table.DataBytes)))
+			autoStatsObjects = append(autoStatsObjects, object)
+		}
+		garbageBytes := table.DataBytes - table.LiveDataBytes
+		if table.DataBytes >= crdbMVCCGarbageMinBytes && garbageBytes >= crdbMVCCGarbageMinBytes && table.LiveDataRatio <= crdbMVCCLiveRatioWarn {
+			mvccGarbage = append(mvccGarbage, fmt.Sprintf("%s · %.1f%% live · %s non-live MVCC data", name, table.LiveDataRatio*100, humanBytes(garbageBytes)))
+			garbageObjects = append(garbageObjects, object)
+			totalGarbage += garbageBytes
+		}
+	}
+	if len(metadataErrors) > 0 {
+		add(model.Finding{
+			ID: "crdb_table_metadata_error", Severity: model.SeverityWarn,
+			Title:    fmt.Sprintf("CockroachDB could not refresh metadata for %d table(s)", len(metadataErrors)),
+			Detail:   "The table metadata cache retained an update error for these tables, so their size, range, replica, and live-data values may describe an older successful refresh.",
+			Evidence: cap10(metadataErrors), Objects: metadataObjects,
+			Remediation: "Inspect the UPDATE TABLE METADATA CACHE job and node connectivity, correct the recorded error, then refresh the cache from DB Console and rerun pgbot.",
+			Impact:      impact(model.DimRisk, 45, fmt.Sprintf("%d tables with stale or missing metadata", len(metadataErrors)), "CockroachDB table-metadata cache update errors"),
+			Confidence:  1.0,
+			Caveats:     []string{"this finding grades diagnostic coverage; it does not by itself prove that SQL traffic is failing"},
+		})
+	}
+	if len(missingStats) > 0 {
+		add(model.Finding{
+			ID: "crdb_table_stats_missing", Severity: model.SeverityWarn,
+			Title:    fmt.Sprintf("%d substantial CockroachDB table(s) have no optimizer statistics", len(missingStats)),
+			Detail:   "Without table statistics, the cost-based optimizer estimates row counts and selectivity from defaults, which can produce poor join orders and scan choices.",
+			Evidence: cap10(missingStats), Objects: missingObjects,
+			Remediation: "Check recent automatic statistics jobs and table-level settings; after fixing the cause, run CREATE STATISTICS for the affected table if an immediate refresh is needed.",
+			Impact:      impact(model.DimLatency, math.Max(50, sizeScore(worstMissingBytes)), fmt.Sprintf("%d tables without optimizer statistics", len(missingStats)), "stats_last_updated is absent on tables with at least 64 MiB of MVCC data"),
+			Confidence:  0.8,
+			Caveats:     []string{"the table metadata API is cached; confirm with SHOW STATISTICS before changing production settings"},
+		})
+	}
+	if len(autoStatsOff) > 0 {
+		add(model.Finding{
+			ID: "crdb_auto_stats_disabled", Severity: model.SeverityInfo,
+			Title:    fmt.Sprintf("automatic statistics are disabled on %d substantial table(s)", len(autoStatsOff)),
+			Detail:   "These tables will not refresh optimizer statistics automatically as their data changes. This can be intentional for a controlled bulk-loading workflow, but otherwise allows plans to drift away from the data distribution.",
+			Evidence: cap10(autoStatsOff), Objects: autoStatsObjects,
+			Remediation: "If the override is not intentional, enable it with ALTER TABLE ... SET (sql_stats_automatic_collection_enabled = true); otherwise schedule and verify manual CREATE STATISTICS runs.",
+			Impact:      impact(model.DimLatency, 30, fmt.Sprintf("%d tables require manual statistics maintenance", len(autoStatsOff)), "table-level automatic statistics state from CockroachDB metadata"),
+			Confidence:  0.9,
+		})
+	}
+	if len(mvccGarbage) > 0 {
+		add(model.Finding{
+			ID: "crdb_mvcc_garbage_pressure", Severity: model.SeverityWarn,
+			Title:    fmt.Sprintf("%d CockroachDB table(s) retain a large non-live MVCC footprint", len(mvccGarbage)),
+			Detail:   "At most half of the cached MVCC data for these tables is live, and at least 1 GiB is non-live. Heavy churn, a long GC TTL, or protected timestamps can retain old versions and increase storage and scan work.",
+			Evidence: cap10(mvccGarbage), Objects: garbageObjects,
+			Remediation: "Check the table's GC TTL, protected timestamps, long transactions, changefeeds, and backup activity. Address the retention cause and let CockroachDB garbage collection reclaim old versions; do not run PostgreSQL VACUUM.",
+			Impact:      impact(model.DimStorage, sizeScore(totalGarbage), humanBytes(totalGarbage)+" non-live MVCC data across replicas", "cached total_data_bytes minus total_live_data_bytes"),
+			Confidence:  0.75,
+			Caveats:     []string{"this is CockroachDB MVCC history, not PostgreSQL heap bloat; retained versions may be intentional, and MVCC bytes do not map one-to-one to physical disk recovery"},
+		})
+	}
+}
+
+func cockroachTableObject(table model.TableStat) string {
+	parts := []string{table.Database, table.Schema, table.Name}
+	var qualified []string
+	for _, part := range parts {
+		if part != "" {
+			qualified = append(qualified, part)
+		}
+	}
+	return strings.Join(qualified, ".")
+}
+
+func cockroachIndexObject(ix model.IndexStat) string {
+	parts := []string{ix.Database, ix.Schema, ix.Table}
+	var qualified []string
+	for _, part := range parts {
+		if part != "" {
+			qualified = append(qualified, part)
+		}
+	}
+	return strings.Join(qualified, ".") + "/" + ix.Name
+}
+
+func crdbIndexCounterConfidence(c *model.Context, threshold time.Duration) (float64, string) {
+	if c.Health == nil || c.Health.Cockroach == nil || c.CollectedAt.IsZero() {
+		return 0.5, "node uptime is unavailable, so pgbot cannot prove that the observation window survived restarts"
+	}
+	known := 0
+	recent := 0
+	for _, node := range c.Health.Cockroach.Nodes {
+		if node.Status != "" && node.Status != "live" {
+			continue
+		}
+		if node.StartedAt.IsZero() || node.StartedAt.After(c.CollectedAt) {
+			continue
+		}
+		known++
+		if c.CollectedAt.Sub(node.StartedAt) < threshold {
+			recent++
+		}
+	}
+	if recent > 0 {
+		return 0.35, fmt.Sprintf("%d live node(s) started within the %s observation threshold, so missing reads may have been reset", recent, shortDur(int64(threshold.Seconds())))
+	}
+	if known == 0 {
+		return 0.5, "node uptime is unavailable, so pgbot cannot prove that the observation window survived restarts"
+	}
+	return 0.7, "counter continuity is inferred from node start times; it is not durable proof of a complete workload cycle"
+}
+
+func crdbQueryObject(fingerprint string, id int64) string {
+	if fingerprint != "" {
+		return "q:" + fingerprint
+	}
+	return fmt.Sprintf("q:%d", id)
 }
 
 func isRisk(f model.Finding) bool { return f.Impact.Dimension == model.DimRisk }
@@ -465,7 +1450,7 @@ type unusedIndex struct {
 }
 
 func unusedIndexes(c *model.Context, add func(model.Finding), tun Tunables) {
-	if c.Indexes == nil {
+	if c.Server.Engine == "cockroachdb" || c.Indexes == nil {
 		return
 	}
 	// Cold window (serverless just woke, or stats reset < 15 min ago): index-scan
@@ -563,7 +1548,7 @@ func unusedIndexes(c *model.Context, add func(model.Finding), tun Tunables) {
 }
 
 func bloatedTables(c *model.Context, add func(model.Finding), tun Tunables) {
-	if c.Tables == nil {
+	if c.Server.Engine == "cockroachdb" || c.Tables == nil {
 		return
 	}
 	var ev, objs []string
@@ -678,7 +1663,7 @@ func unindexedForeignKeys(c *model.Context, add func(model.Finding)) {
 // partition's own count looks harmless (so seqScanHeavy, which is per-relation,
 // misses it). Usually a missing index or a query that can't prune partitions.
 func partitionSeqScanHeavy(c *model.Context, add func(model.Finding)) {
-	if c.Tables == nil || c.Window.ColdWindow() {
+	if c.Server.Engine == "cockroachdb" || c.Tables == nil || c.Window.ColdWindow() {
 		return
 	}
 	var ev, objs []string
@@ -709,7 +1694,7 @@ func partitionSeqScanHeavy(c *model.Context, add func(model.Finding)) {
 }
 
 func seqScanHeavy(c *model.Context, add func(model.Finding)) {
-	if c.Tables == nil || c.Window.ColdWindow() { // scan counts are cold-window-sensitive
+	if c.Server.Engine == "cockroachdb" || c.Tables == nil || c.Window.ColdWindow() { // scan counts are cold-window-sensitive
 		return
 	}
 	var ev, objs []string
@@ -763,6 +1748,9 @@ func hasExtension(c *model.Context, name string) bool {
 // "why can't it reclaim"): a table excluded from it, one never vacuumed, dead
 // tuples piling past the trigger, worker saturation, and a long-running worker.
 func autovacuumHealth(c *model.Context, add func(model.Finding)) {
+	if c.Server.Engine == "cockroachdb" {
+		return
+	}
 	if c.Tables != nil {
 		gThresh := settingFloat(c, "autovacuum_vacuum_threshold", 50)
 		gScale := settingFloat(c, "autovacuum_vacuum_scale_factor", 0.2)
@@ -866,7 +1854,7 @@ func autovacuumHealth(c *model.Context, add func(model.Finding)) {
 // reloption overrides of the analyze threshold/scale. never_analyzed is the
 // stronger case: a table above the floor that has never been analyzed at all.
 func staleStatistics(c *model.Context, add func(model.Finding)) {
-	if c.Tables == nil {
+	if c.Server.Engine == "cockroachdb" || c.Tables == nil {
 		return
 	}
 	gThresh := settingFloat(c, "autovacuum_analyze_threshold", 50)
@@ -958,7 +1946,7 @@ func settingFloat(c *model.Context, name string, def float64) float64 {
 // WAL, index bloat, and vacuum work — usually fillfactor 100 (no page free space)
 // or an index on a frequently-updated column. Gated on update volume.
 func lowHotUpdateRatio(c *model.Context, add func(model.Finding)) {
-	if c.Tables == nil {
+	if c.Server.Engine == "cockroachdb" || c.Tables == nil {
 		return
 	}
 	var ev, objs []string
@@ -1919,9 +2907,11 @@ func querySlowdown(c *model.Context, add func(model.Finding)) {
 	// Carry that as a load-bearing caveat and drop confidence below the assertion line.
 	conf := 0.8
 	var caveats []string
-	if pgssEvicting(c) {
+	basis := "query mean time vs the baseline"
+	if c.Server.Engine != "cockroachdb" && pgssEvicting(c) {
 		caveats = append(caveats, "pg_stat_statements is evicting entries — this query may have been evicted and re-entered (stats reset), so the regression could be an artifact (see pgss_entries_evicted)")
 		conf = 0.4
+		basis = "pg_stat_statements mean time vs the baseline"
 	}
 	add(model.Finding{
 		ID: "query_slowdown", Severity: model.SeverityWarn,
@@ -1930,7 +2920,7 @@ func querySlowdown(c *model.Context, add func(model.Finding)) {
 		Remediation: "Check for a missing/invalid index and run ANALYZE on the table; compare the current plan against before.",
 		Impact: impact(model.DimLatency, math.Min(90, 30+worstFactor*10),
 			fmt.Sprintf("%.1f× slower", worstFactor),
-			"pg_stat_statements mean time vs the baseline"),
+			basis),
 		Confidence: conf,
 		Caveats:    caveats,
 	})
@@ -2210,6 +3200,9 @@ func highRollbacks(c *model.Context, add func(model.Finding)) {
 }
 
 func missingPgss(c *model.Context, add func(model.Finding)) {
+	if c.Server.Engine == "cockroachdb" {
+		return
+	}
 	if c.Queries != nil && c.Queries.Enabled {
 		return
 	}

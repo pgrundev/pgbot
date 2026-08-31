@@ -29,7 +29,7 @@
   <a href="docs/providers.md">Provider notes</a>
 </p>
 
-> **Status: beta.** The `--json` contract is versioned (currently `1.2.0`, JSON
+> **Status: beta.** The `--json` contract is versioned (currently `1.3.0`, JSON
 > Schema published in [`schema/`](schema/)) and breaking changes to it are
 > treated as breaking changes to the tool. The human-readable report is **not**
 > a stable interface — parse `--json`, not the terminal output.
@@ -121,7 +121,7 @@ review an index on customer_id + created_at.
 
 | | |
 |---|---|
-| **Read-only by role, not by flag** | The guarantee is a `pg_monitor` login role with no write grants. Session pinning (`default_transaction_read_only`, `statement_timeout=15s`, `lock_timeout=2s`) and `BEGIN READ ONLY` are defence in depth on top of it. |
+| **Read-only by role, not by flag** | The guarantee is a monitoring login role (`pg_monitor` on PostgreSQL, `VIEWACTIVITY` on CockroachDB) with no write grants. Session pinning (`default_transaction_read_only`, `statement_timeout=15s`, `lock_timeout=2s`) and `BEGIN READ ONLY` are defence in depth on top of it. |
 | **It remembers** | Every run writes a local baseline, so from the third run on it tells you *what changed and why it matters* — a query that got slower, a table that started sequential-scanning, an index that stopped being used. |
 | **Findings are deterministic** | Every finding is computed in Go from SQL. The optional AI layer explains findings; it never generates them. |
 | **Nothing to deploy** | One static binary. No collector, no time-series database, no service to run. |
@@ -144,6 +144,27 @@ needs structured Postgres findings it can reason over.
 - PostgreSQL 14–18 (16–18 fully supported, 14–15 best-effort); collectors
   degrade rather than fail on older feature sets — see
   [Version support](#version-support).
+- CockroachDB support is experimental. It reports cluster node/range/capacity
+  health, fresh query and connection rates, hot physical ranges, jobs, live SQL
+  activity, persisted statement statistics, key-redacted contention hotspots
+  with normalized waiter/blocker SQL attribution, transaction retries, and
+  execution insights, plus cluster-wide index reads/writes, last-use times, and
+  conservative aged-unused candidates. With the Admin API it also reports cached
+  table size, MVCC live-data, range/replica placement, optimizer-statistics health,
+  and top-hot-range correlation. Background-job diagnostics include redacted
+  operation/status/error context, progress and high-water freshness, and findings
+  for failures, stalled work, reverts, and paused jobs. Distribution diagnostics
+  compare similarly sized live stores for replica, leaseholder, and capacity skew,
+  then correlate the bounded top-hot-range sample by store and leaseholder. Storage
+  diagnostics separate CockroachDB-owned bytes from other filesystem use/overhead,
+  report MVCC bytes per replica, replication recovery and Raft queues, and sample
+  disk-slow, disk-stalled, write-stall, and dropped-message counters;
+  PostgreSQL-only sections are explicitly marked unavailable. Cluster
+  health is enabled with `--crdb-admin-url https://host:26258`; the Prometheus
+  load endpoint defaults to the same origin.
+  If the connection already opts into `allow_unsafe_internals`, pgbot uses
+  CockroachDB's bounded 24-hour SQL Activity cache; otherwise it uses the public
+  one-hour persisted-statistics view and labels the source in JSON/output.
 - A login role holding `pg_monitor` — see
   [Setup](#setup--a-read-only-role-with-pg_monitor).
 - `pg_stat_statements` for the queries section (optional; pgbot prints the
@@ -225,6 +246,7 @@ or `$PGBOT_DATABASE_URL`.
 | `diff` | compare two baseline snapshots offline |
 | `why` | explain a regression from baseline history: symptom ← mechanism ← antecedent, with numbers and onset times (offline) |
 | `indexes` · `queries` · `tables` · `vacuum` | drill into one signal |
+| `health` · `distribution` · `storage` · `jobs` · `activity` · `contention` | focused CockroachDB diagnostic screens |
 | `advise` | planner-validated missing-index suggestions (needs hypopg) |
 | `ask "…"` · `explain` | a plain-language AI reading of the same deterministic findings |
 | `explain-finding <id>` | the catalogue page for a finding, offline |
@@ -341,6 +363,19 @@ Without `pg_monitor`, a non-superuser sees only its own sessions in
 connect time and tells you exactly which GRANT to run rather than silently
 reporting partial data.
 
+For the experimental CockroachDB workload collectors, use the equivalent
+cluster-visibility privilege. `VIEWACTIVITYREDACTED` also works, with query text
+redacted by CockroachDB:
+
+```sql
+CREATE ROLE pgbot_ro LOGIN PASSWORD '...';
+GRANT CONNECT ON DATABASE yourdb TO pgbot_ro;
+GRANT SYSTEM VIEWACTIVITY TO pgbot_ro;
+```
+
+`pgbot init` and `pgbot init --verify` detect CockroachDB and emit/check this
+setup instead of recommending PostgreSQL extensions.
+
 pgbot additionally pins every session read-only (`default_transaction_read_only`,
 `statement_timeout=15s`, `lock_timeout=2s`) and wraps each query in its own
 `BEGIN READ ONLY … COMMIT`. It **commits** those read-only probes rather than
@@ -388,6 +423,35 @@ pgbot resolves the connection in this order: the argument first, then
 `$DATABASE_URL`, then `$PGBOT_DATABASE_URL`. Add `?sslmode=require` (or stricter)
 for any database reached over a network.
 
+For a comprehensive CockroachDB health report, also point `inspect` at the DB
+Console/Admin API origin. pgbot reuses the pgwire CA and client certificate,
+creates a short-lived API session from the SQL username/password, and revokes
+that session after collection. The user must be a CockroachDB admin for API v2.
+The unauthenticated lightweight Prometheus endpoint is sampled twice per node;
+it may be supplied separately when it has a different origin.
+
+```bash
+pgbot inspect "$DATABASE_URL" --crdb-admin-url https://node-1:26258 --full
+
+# Equivalent environment form:
+export PGBOT_CRDB_ADMIN_URL=https://node-1:26258
+export PGBOT_CRDB_PROMETHEUS_URL=https://prometheus-gateway:26258
+
+# Focused CockroachDB screens use the same collectors as inspect --full:
+pgbot health
+pgbot distribution
+pgbot storage
+pgbot jobs
+pgbot activity
+pgbot contention
+pgbot queries
+pgbot tables
+pgbot indexes
+```
+
+If password-based API login is unavailable, `PGBOT_CRDB_API_SESSION` accepts an
+already-issued API session token. pgbot never revokes a caller-supplied token.
+
 ### Environment reference
 
 | Variable | Purpose |
@@ -396,6 +460,9 @@ for any database reached over a network.
 | `NO_COLOR` | Disables ANSI output (as does a non-TTY, or `--no-color`). |
 | `XDG_STATE_HOME` | Where the baseline store lives; defaults to `~/.local/state`. |
 | `PGBOT_CONFIG` | Path to `.pgbot.toml` (otherwise discovered from cwd upward, then `$XDG_CONFIG_HOME`). |
+| `PGBOT_CRDB_ADMIN_URL` | CockroachDB DB Console/Admin API origin; enables node, range, capacity, storage/replication, job, and hot-range health. |
+| `PGBOT_CRDB_PROMETHEUS_URL` | Optional Prometheus origin or exact `/_status/load` URL; defaults to the Admin API origin. |
+| `PGBOT_CRDB_API_SESSION` | Optional pre-issued CockroachDB API session when password login is unavailable. |
 | `OPENAI_API_KEY` | Enables `ask` / `explain` via OpenAI. Keys are never accepted as flags. |
 | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | Enables `ask` / `explain` via Google Gemini. |
 | `PGBOT_AI_PROVIDER` | Forces `openai` or `gemini` when both keys are set. |
@@ -522,6 +589,12 @@ pgbot indexes <connection-string>   # zero-scan indexes + what NOT to drop
   --correlate            grade each index (catalog_proven/needs_code_check/inconclusive) + what to grep in code
 pgbot queries <connection-string>   # top pg_stat_statements by total time (--by-calls to re-rank)
 pgbot tables  <connection-string>   # largest tables + row counts + seq-vs-index scan pattern
+pgbot health <connection-string>    # CockroachDB node, range, capacity, and resource health
+pgbot distribution <connection-string> # CockroachDB replica, lease, capacity, and hotspot balance
+pgbot storage <connection-string>   # CockroachDB storage, MVCC, recovery, and Raft health
+pgbot jobs <connection-string>      # CockroachDB jobs and schema changes
+pgbot activity <connection-string>  # CockroachDB sessions and live queries
+pgbot contention <connection-string># CockroachDB lock/contention hotspots
 pgbot vacuum <connection-string>    # autovacuum health per table — dead tuples + whether it's due
 pgbot tune <connection-string>      # config-tuning recommendations from the workload
 pgbot explain <connection-string>   # inspect, then have an AI explain the findings
@@ -620,12 +693,19 @@ carry every caveat into any recommendation. The AI text is printed below a
 labeled rule (`🤖 generated by … — verify before acting`); if the model errors
 or the key is unset, the deterministic report still stands.
 
-This is the **only** command that sends data off the machine — the same PII-free
-Context you can see with `inspect --json`. It works with **OpenAI or Google
+The AI commands send a compact PII-free subset of the Context: deterministic
+findings, aggregate health signals, recent event kinds, and baseline deltas. On
+CockroachDB this includes Admin API/Prometheus cluster health and engine-native
+workload aggregates, while excluding raw SQL, per-node localities, users,
+application names, and job descriptions. They work with **OpenAI or Google
 Gemini**, and the key is always read from the environment (never a flag). pgbot
 picks the provider automatically: `OPENAI_API_KEY` → OpenAI, `GEMINI_API_KEY` (or
 `GOOGLE_API_KEY`) → Gemini. Set `PGBOT_AI_PROVIDER=openai|gemini` to force one when
 both are present.
+
+On CockroachDB, `ask` and `explain` detect the engine automatically and honor
+`PGBOT_CRDB_ADMIN_URL` / `PGBOT_CRDB_PROMETHEUS_URL` (or the equivalent command
+flags), so the model sees the same cluster-health coverage used by `inspect`.
 
 ```
 # OpenAI
@@ -698,13 +778,13 @@ rates; the rest are point-in-time reads trended against the baseline.
 ## The `--json` contract
 
 `--json` (and `--format=json`) is the interface to build on — a versioned,
-PII-free document (`schema_version`, currently `1.2.0`) whose machine-checkable
+PII-free document (`schema_version`, currently `1.3.0`) whose machine-checkable
 JSON Schema is published in [`schema/`](schema/). Every section carries an
 `exactness` label — `sampled`, `cumulative`, `scraped`, or `unavailable` — so a
 consumer never mistakes a cumulative total for a live rate.
 
 Versioning policy: additive fields bump the minor version and are not breaking —
-a `1.1.0` consumer parses `1.2.0` output unchanged; breaking changes to the
+a `1.2.0` consumer parses `1.3.0` output unchanged; breaking changes to the
 contract are treated as breaking changes to the tool. `pgbot advise --json` has
 its own schema
 ([`schema/pgbot-advise-1.0.0.json`](schema/pgbot-advise-1.0.0.json)).
@@ -727,6 +807,7 @@ Collectors degrade rather than fail when a capability is absent:
 |---|---|---|
 | **Supported** | PostgreSQL 16, 17, 18 | every PR + push |
 | **Best-effort** | PostgreSQL 14, 15 | every PR + push |
+| **Experimental** | CockroachDB (SQL workload diagnostics) | opt-in integration test |
 | Unsupported | PostgreSQL 13 and older | — (13 is [end-of-life](https://www.postgresql.org/support/versioning/)) |
 
 New features may target 16+ without a backward path. Everything degrades rather
@@ -985,9 +1066,9 @@ package is scoped. Use `npx @pgbot/cli`.
 ## Privacy
 
 Nothing leaves the machine unless you ask for it: every command except the AI
-layer is entirely local. The only commands that make an outbound call are `pgbot
-explain` and `pgbot ask`, which send the same PII-free Context to your configured
-model — OpenAI or Gemini (and say so, with a confirmation prompt).
+layer is entirely local. The only commands that send diagnostics to an external
+model are `pgbot explain` and `pgbot ask`; they send a compact PII-free Context
+subset to OpenAI or Gemini and say so with a confirmation prompt.
 
 That Context is PII-free by construction: `pg_stat_statements` text is normalized
 (`$1` placeholders), and the one raw-SQL source (`pg_stat_activity` for blocking

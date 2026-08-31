@@ -8,6 +8,7 @@ import (
 
 	"github.com/pgrundev/pgbot/internal/collect"
 	"github.com/pgrundev/pgbot/internal/conn"
+	"github.com/pgrundev/pgbot/internal/crdbhttp"
 	"github.com/pgrundev/pgbot/internal/diff"
 	"github.com/pgrundev/pgbot/internal/events"
 	"github.com/pgrundev/pgbot/internal/model"
@@ -46,6 +47,9 @@ type inspectFlags struct {
 	parallel     int      // max concurrent database inspections (B3); default 1 = serial
 	profile      string   // full (default) | schema: emit only schema-scoped findings (D3-1)
 	failOnNew    string   // path to a base report; act only on findings new vs it (D3-2)
+	crdbAdminURL string   // CockroachDB DB Console/Admin API origin
+	crdbPromURL  string   // CockroachDB Prometheus origin or /_status/load URL
+	crdbHTTP     bool     // gather should include CockroachDB Admin/Prometheus collectors
 }
 
 // schemaProfile reports whether this run is a schema-only check (--profile=schema).
@@ -59,7 +63,8 @@ func newInspectCmd() *cobra.Command {
 		Long: "Connect read-only, sample the statistics views, and print a findings-first\n" +
 			"report (or --json). Writes a baseline snapshot so later runs show what changed.\n\n" +
 			"The connection string may be a URL (postgres://...) or a libpq DSN, or set\n" +
-			"$DATABASE_URL and omit the argument. Use a role holding pg_monitor and no write grants.",
+			"$DATABASE_URL and omit the argument. On PostgreSQL use pg_monitor; on CockroachDB\n" +
+			"use VIEWACTIVITY. The monitoring role should have no write grants.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runInspect(cmd, args, f)
@@ -85,6 +90,8 @@ func newInspectCmd() *cobra.Command {
 	fl.StringVar(&f.failOnNew, "fail-on-new", "", "path to a base report (JSON); mark findings already in it preexisting and act only on new ones")
 	fl.BoolVar(&f.allDatabases, "all-databases", false, "inspect every database in the cluster (cluster-wide findings reported once)")
 	fl.IntVar(&f.parallel, "parallel", 1, "max databases inspected concurrently under --all-databases (default 1 = serial)")
+	fl.StringVar(&f.crdbAdminURL, "crdb-admin-url", "", "CockroachDB DB Console/Admin API origin (or PGBOT_CRDB_ADMIN_URL)")
+	fl.StringVar(&f.crdbPromURL, "crdb-prometheus-url", "", "CockroachDB Prometheus origin or /_status/load URL (defaults to admin URL)")
 	return cmd
 }
 
@@ -117,6 +124,11 @@ func runInspect(cmd *cobra.Command, args []string, f inspectFlags) error {
 		return fmt.Errorf("connect: %s", conn.RedactConnString(err.Error()))
 	}
 	defer target.Close()
+	httpClient, err := newCockroachHTTP(connString, target.Caps, f)
+	if err != nil {
+		return err
+	}
+	defer closeCockroachHTTP(httpClient)
 
 	// Transaction poolers: pgbot's rates stay correct behind one (each counter is
 	// read in its own transaction; pg_stat_* are cluster-wide), so we proceed by
@@ -139,7 +151,7 @@ func runInspect(cmd *cobra.Command, args []string, f inspectFlags) error {
 	}
 	c, err := collect.Run(ctx, target, collect.Options{
 		Interval: f.interval, RawQueryText: f.rawQueries, ASHHz: f.ashHz, ASHWindow: f.window, Deadline: f.timeout,
-		SchemaOnly: f.schemaProfile(),
+		SchemaOnly: f.schemaProfile(), CockroachHTTP: httpClient,
 	})
 	if err != nil {
 		return fmt.Errorf("collect: %s", conn.RedactConnString(err.Error()))
@@ -190,8 +202,40 @@ func runInspect(cmd *cobra.Command, args []string, f inspectFlags) error {
 		}
 	}
 
+	// os.Exit skips defers, so revoke an API session explicitly on the success
+	// path. The defer above still covers every early return.
+	closeCockroachHTTP(httpClient)
 	os.Exit(exitCode(c.Findings, f.failOn))
 	return nil
+}
+
+func newCockroachHTTP(connString string, caps conn.Capabilities, f inspectFlags) (*crdbhttp.Client, error) {
+	if !caps.IsCockroachDB() {
+		return nil, nil
+	}
+	adminURL := firstNonEmpty(f.crdbAdminURL, os.Getenv("PGBOT_CRDB_ADMIN_URL"))
+	promURL := firstNonEmpty(f.crdbPromURL, os.Getenv("PGBOT_CRDB_PROMETHEUS_URL"))
+	if adminURL == "" && promURL == "" {
+		return nil, nil
+	}
+	client, err := crdbhttp.NewFromConnectionString(connString, crdbhttp.Config{
+		AdminURL: adminURL, PrometheusURL: promURL, APISession: os.Getenv("PGBOT_CRDB_API_SESSION"),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("CockroachDB health endpoints: %s", conn.RedactConnString(err.Error()))
+	}
+	return client, nil
+}
+
+func closeCockroachHTTP(client *crdbhttp.Client) {
+	if client == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Close(ctx); err != nil {
+		fmt.Fprintln(os.Stderr, "pgbot: could not revoke CockroachDB API session: "+conn.RedactConnString(err.Error()))
+	}
 }
 
 // withStore loads the baseline (for Deltas + sparkline trends) and persists this

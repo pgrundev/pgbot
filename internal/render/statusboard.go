@@ -87,13 +87,54 @@ func buildBoard(c *model.Context) []boardRow {
 				return "fail", kBad
 			case model.SeverityWarn:
 				word, kind = "warn", kWatch
+			case model.SeverityInfo:
+				if kind == kOK {
+					word, kind = "note", kInfo
+				}
 			}
 		}
 		return word, kind
 	}
 
 	var rows []boardRow
-	if h := c.Health; h != nil {
+	if h := c.Health; c.Server.Engine == "cockroachdb" && h != nil && h.Cockroach != nil {
+		ch := h.Cockroach
+		if h.Exactness != model.ExactnessUnavailable {
+			s, k := statusFor("crdb_node_unavailable")
+			rows = append(rows, boardRow{"cluster", s, k, fmt.Sprintf("%d/%d live", ch.NodesLive, ch.NodesTotal), fmt.Sprintf("%d stores", ch.StoresTotal)})
+			s, k = statusFor("crdb_ranges_unavailable", "crdb_ranges_underreplicated")
+			rows = append(rows, boardRow{"ranges", s, k, fmt.Sprintf("%d unavailable", ch.UnavailableRanges), fmt.Sprintf("%d under-replicated", ch.UnderreplicatedRanges)})
+			if ch.CapacityBytes > 0 {
+				s, k = statusFor("crdb_store_capacity")
+				rows = append(rows, boardRow{"capacity", s, k, humanBytes(ch.AvailableBytes) + " free", "fullest " + pct(ch.MaxStoreUsedRatio)})
+			}
+			if ch.Distribution.Exactness != "" && ch.Distribution.Exactness != model.ExactnessUnavailable {
+				d := &ch.Distribution
+				s, k = statusFor("crdb_replica_imbalance", "crdb_leaseholder_imbalance", "crdb_capacity_imbalance", "crdb_hot_range_concentration")
+				rows = append(rows, boardRow{"balance", s, k, fmt.Sprintf("%d/%d comparable", d.ComparableStores, d.LiveStores), fmt.Sprintf("replicas %d–%d", d.ReplicaMin, d.ReplicaMax)})
+			}
+			if ch.Storage.Exactness != "" && ch.Storage.Exactness != model.ExactnessUnavailable {
+				storage := &ch.Storage
+				s, k = statusFor("crdb_external_disk_usage", "crdb_storage_stall", "crdb_replica_size_skew")
+				rows = append(rows, boardRow{"storage", s, k, humanBytes(storage.CockroachUsedBytes) + " CRDB", humanBytes(storage.OtherUsedBytes) + " other"})
+				s, k = statusFor("crdb_replication_recovery", "crdb_raft_backlog")
+				rows = append(rows, boardRow{"replication", s, k, fmt.Sprintf("%s uninitialized", humanNum(float64(storage.UninitializedReplicas))), fmt.Sprintf("%s Raft pending", humanNum(float64(storage.RaftCommandsPending)))})
+			}
+			if ch.QueriesPerSec != nil {
+				s, k = statusFor("crdb_resource_pressure")
+				rows = append(rows, boardRow{"load", s, k, humanNum(*ch.QueriesPerSec) + " qps", fmt.Sprintf("%d SQL conns", ch.SQLConnections)})
+			}
+		}
+		if ch.Jobs.Exactness != "" && ch.Jobs.Exactness != model.ExactnessUnavailable {
+			counts := countCockroachJobs(ch.JobItems)
+			total := ch.JobsTotal
+			if total == 0 {
+				total = len(ch.JobItems)
+			}
+			s, k := statusFor("crdb_job_failed", "crdb_job_stalled", "crdb_job_reverting", "crdb_job_paused")
+			rows = append(rows, boardRow{"jobs", s, k, fmt.Sprintf("%d tracked", total), fmt.Sprintf("%d need attention", counts.attention)})
+		}
+	} else if h := c.Health; h != nil && h.Exactness != model.ExactnessUnavailable {
 		note := ""
 		if c.Activity != nil && c.Activity.IdleInTransaction > 0 {
 			note = fmt.Sprintf("%d idle in txn", c.Activity.IdleInTransaction)
@@ -126,7 +167,22 @@ func buildBoard(c *model.Context) []boardRow {
 			rows = append(rows, boardRow{"rollbacks", s, k, pct(*h.RollbackRatio), note})
 		}
 	}
-	if c.Locks != nil {
+	if a := c.Activity; c.Server.Engine == "cockroachdb" && a != nil && a.Exactness != model.ExactnessUnavailable {
+		rows = append(rows, boardRow{"activity", "ok", kOK, fmt.Sprintf("%d sessions", a.Total), fmt.Sprintf("%d active", a.Active)})
+	}
+	if c.Server.Engine == "cockroachdb" && c.Queries != nil && c.Queries.Exactness != model.ExactnessUnavailable {
+		rows = append(rows, boardRow{"query stats", "ok", kOK, fmt.Sprintf("%d fingerprints", len(c.Queries.Top)), cockroachQuerySourceNote(c.Queries)})
+	}
+	if c.Cockroach != nil && c.Cockroach.ExecutionInsights.Exactness != model.ExactnessUnavailable {
+		status, kind := statusFor("crdb_execution_insights")
+		rows = append(rows, boardRow{"SQL insights", status, kind, fmt.Sprintf("%d recent", len(c.Cockroach.ExecutionInsights.Items)), "slow / failed"})
+	}
+	if c.Cockroach != nil && c.Cockroach.Contention.Exactness != "" && c.Cockroach.Contention.Exactness != model.ExactnessUnavailable {
+		h := &c.Cockroach.Contention
+		status, kind := statusFor("crdb_contention_hotspot", "crdb_serialization_conflicts")
+		rows = append(rows, boardRow{"contention", status, kind, fmt.Sprintf("%d events", h.TotalEvents), humanDurationMS(h.TotalWaitMS) + " wait"})
+	}
+	if c.Locks != nil && c.Locks.Exactness != model.ExactnessUnavailable {
 		s, k := statusFor("blocking_chains")
 		val, note := "clear", ""
 		if c.Locks.BlockedCount > 0 {
@@ -137,22 +193,41 @@ func buildBoard(c *model.Context) []boardRow {
 		}
 		rows = append(rows, boardRow{"locks", s, k, val, note})
 	}
-	if c.Indexes != nil {
-		s, k := statusFor("unused_indexes", "index_invalid")
-		var total int64
-		for _, ix := range c.Indexes.Unused {
-			total += ix.Bytes
+	if c.Indexes != nil && c.Indexes.Exactness != model.ExactnessUnavailable {
+		s, k := statusFor("unused_indexes", "index_invalid", "crdb_unused_indexes")
+		if c.Server.Engine == "cockroachdb" {
+			val := fmt.Sprintf("%d secondary", c.Indexes.SecondaryTotal)
+			note := "none unused ≥" + indexThreshold(c.Indexes)
+			if len(c.Indexes.Unused) > 0 {
+				val = fmt.Sprintf("%d candidates", len(c.Indexes.Unused))
+				note = "no reads ≥" + indexThreshold(c.Indexes)
+			}
+			rows = append(rows, boardRow{"indexes", s, k, val, note})
+		} else {
+			var total int64
+			for _, ix := range c.Indexes.Unused {
+				total += ix.Bytes
+			}
+			val, note := "clean", ""
+			if len(c.Indexes.Unused) > 0 {
+				val = HumanBytes(total)
+				note = fmt.Sprintf("%d zero scans", len(c.Indexes.Unused))
+			}
+			rows = append(rows, boardRow{"indexes", s, k, val, note})
 		}
-		val, note := "clean", ""
-		if len(c.Indexes.Unused) > 0 {
-			val = HumanBytes(total)
-			note = fmt.Sprintf("%d zero scans", len(c.Indexes.Unused))
-		}
-		rows = append(rows, boardRow{"indexes", s, k, val, note})
 	}
-	if c.Tables != nil {
-		s, k := statusFor("table_bloat", "seq_scan_heavy")
-		rows = append(rows, boardRow{"tables", s, k, HumanBytes(c.Tables.DBSizeBytes), fmt.Sprintf("%d tracked", len(c.Tables.Top))})
+	if c.Tables != nil && c.Tables.Exactness != model.ExactnessUnavailable {
+		if c.Server.Engine == "cockroachdb" {
+			s, k := statusFor("crdb_table_metadata_error", "crdb_table_stats_missing", "crdb_mvcc_garbage_pressure")
+			note := fmt.Sprintf("%d tables", c.Tables.Total)
+			if age := tableMetadataAge(c); age != "unknown" {
+				note += " · cache " + age
+			}
+			rows = append(rows, boardRow{"tables", s, k, HumanBytes(c.Tables.DBSizeBytes), note})
+		} else {
+			s, k := statusFor("table_bloat", "seq_scan_heavy")
+			rows = append(rows, boardRow{"tables", s, k, HumanBytes(c.Tables.DBSizeBytes), fmt.Sprintf("%d tracked", len(c.Tables.Top))})
+		}
 	}
 	if c.Limits != nil && c.Limits.Exactness != model.ExactnessUnavailable {
 		s, k := statusFor("txid_wraparound")
@@ -165,14 +240,14 @@ func buildBoard(c *model.Context) []boardRow {
 	if w := c.WAL; w != nil && w.BytesPerSec != nil {
 		rows = append(rows, boardRow{"WAL", "ok", kOK, HumanBytes(int64(*w.BytesPerSec)) + "/s", ""})
 	}
-	if c.IO != nil {
+	if c.IO != nil && c.IO.Exactness != model.ExactnessUnavailable {
 		note := "none forced"
 		if c.IO.CheckpointsReq > 0 {
 			note = fmt.Sprintf("%d forced", c.IO.CheckpointsReq)
 		}
 		rows = append(rows, boardRow{"checkpoints", "ok", kOK, "timed", note})
 	}
-	if r := c.Replication; r != nil {
+	if r := c.Replication; r != nil && r.Exactness != model.ExactnessUnavailable {
 		val, note := "none", ""
 		switch {
 		case r.IsReplica:
@@ -186,7 +261,7 @@ func buildBoard(c *model.Context) []boardRow {
 		}
 		rows = append(rows, boardRow{"replication", "ok", kOK, val, note})
 	}
-	if c.Settings != nil {
+	if c.Settings != nil && c.Settings.Exactness != model.ExactnessUnavailable {
 		rows = append(rows, boardRow{"settings", "ok", kOK, fmt.Sprintf("%d non-default", len(c.Settings.Overrides)), ""})
 	}
 	return rows

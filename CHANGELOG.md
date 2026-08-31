@@ -3,11 +3,17 @@
 All notable changes to pgbot are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims for
 [Semantic Versioning](https://semver.org/). The `--json` contract is versioned
-separately by `model.SchemaVersion` (currently 1.2.0).
+separately by `model.SchemaVersion` (currently 1.3.0).
 
 ## [Unreleased]
 
 ### Added
+- **Experimental CockroachDB diagnostics.** Engine-aware collection now covers
+  cluster and workload health, live and persisted queries, contention,
+  execution insights, indexes, tables, jobs, range distribution, hotspots,
+  storage, replication recovery, and Raft queues. Focused terminal screens and
+  CockroachDB-grounded `ask` / `explain` summaries use the same deterministic,
+  PII-free context. The JSON contract advances additively to **1.3.0**.
 - **PgDog poolers are identified behaviorally, never by hostname** (#22). The
   connect probe now sets the `pgdog.shard` routing hint session-level alongside
   a control GUC and reads both back: PgDog consumes `pgdog.*` hints instead of

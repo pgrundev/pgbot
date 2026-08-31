@@ -103,10 +103,15 @@ func inspectOne(ctx context.Context, connString, database string, f inspectFlags
 		return nil, err
 	}
 	defer target.Close()
+	httpClient, err := newCockroachHTTP(connString, target.Caps, f)
+	if err != nil {
+		return nil, err
+	}
+	defer closeCockroachHTTP(httpClient)
 
 	c, err := collect.Run(ctx, target, collect.Options{
 		Interval: f.interval, RawQueryText: f.rawQueries, ASHHz: f.ashHz, ASHWindow: f.window, Deadline: f.timeout,
-		SchemaOnly: f.schemaProfile(),
+		SchemaOnly: f.schemaProfile(), CockroachHTTP: httpClient,
 	})
 	if err != nil {
 		return nil, err

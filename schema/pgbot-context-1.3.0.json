@@ -1,0 +1,3036 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pgbot.dev/schema/pgbot-context-1.3.0.json",
+  "$ref": "#/$defs/Context",
+  "$defs": {
+    "Activity": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "total": {
+          "type": "integer"
+        },
+        "active": {
+          "type": "integer"
+        },
+        "idle": {
+          "type": "integer"
+        },
+        "idle_in_transaction": {
+          "type": "integer"
+        },
+        "waiting": {
+          "type": "integer"
+        },
+        "by_state": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "wait_events": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "longest_xact_sec": {
+          "type": "number"
+        },
+        "longest_active_sec": {
+          "type": "number"
+        },
+        "connections": {
+          "items": {
+            "$ref": "#/$defs/ConnGroup"
+          },
+          "type": "array"
+        },
+        "autovacuum_workers": {
+          "type": "integer"
+        },
+        "autovacuum_max_age_sec": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "total",
+        "active",
+        "idle",
+        "idle_in_transaction",
+        "waiting",
+        "by_state",
+        "longest_xact_sec",
+        "longest_active_sec"
+      ]
+    },
+    "Archiver": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "archived_count": {
+          "type": "integer"
+        },
+        "last_archived_wal": {
+          "type": "string"
+        },
+        "last_archived_time": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "failed_count": {
+          "type": "integer"
+        },
+        "last_failed_wal": {
+          "type": "string"
+        },
+        "last_failed_time": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "stats_reset": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "has_archive_command": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "archived_count",
+        "failed_count",
+        "has_archive_command"
+      ]
+    },
+    "BlockingRow": {
+      "properties": {
+        "blocked_pid": {
+          "type": "integer"
+        },
+        "blocking_pids": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "wait_event": {
+          "type": "string"
+        },
+        "wait_seconds": {
+          "type": "number"
+        },
+        "blocked_query": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "blocked_pid",
+        "blocking_pids",
+        "wait_seconds",
+        "blocked_query"
+      ]
+    },
+    "ChecksumFailure": {
+      "properties": {
+        "database": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer"
+        },
+        "last_failure": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "database",
+        "count"
+      ]
+    },
+    "Checksums": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "failures": {
+          "items": {
+            "$ref": "#/$defs/ChecksumFailure"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness"
+      ]
+    },
+    "CockroachContention": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "window_minutes": {
+          "type": "integer"
+        },
+        "bounded": {
+          "type": "boolean"
+        },
+        "total_events": {
+          "type": "integer"
+        },
+        "total_wait_ms": {
+          "type": "number"
+        },
+        "max_wait_ms": {
+          "type": "number"
+        },
+        "serialization_conflicts": {
+          "type": "integer"
+        },
+        "hotspots": {
+          "items": {
+            "$ref": "#/$defs/CockroachContentionHotspot"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "window_minutes",
+        "bounded",
+        "total_events",
+        "total_wait_ms",
+        "max_wait_ms",
+        "serialization_conflicts"
+      ]
+    },
+    "CockroachContentionHotspot": {
+      "properties": {
+        "database": {
+          "type": "string"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "index": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "waiting_statement_fingerprint": {
+          "type": "string"
+        },
+        "blocking_transaction_fingerprint": {
+          "type": "string"
+        },
+        "blocking_statement_fingerprint": {
+          "type": "string"
+        },
+        "waiting_query": {
+          "type": "string"
+        },
+        "blocking_query": {
+          "type": "string"
+        },
+        "blocking_queries": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "waiting_applications": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "blocking_applications": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "waiter_resolution": {
+          "type": "string"
+        },
+        "blocker_resolution": {
+          "type": "string"
+        },
+        "events": {
+          "type": "integer"
+        },
+        "total_wait_ms": {
+          "type": "number"
+        },
+        "max_wait_ms": {
+          "type": "number"
+        },
+        "last_seen": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "database",
+        "schema",
+        "table",
+        "type",
+        "waiting_statement_fingerprint",
+        "waiter_resolution",
+        "blocker_resolution",
+        "events",
+        "total_wait_ms",
+        "max_wait_ms",
+        "last_seen"
+      ]
+    },
+    "CockroachDB": {
+      "properties": {
+        "live_queries": {
+          "$ref": "#/$defs/CockroachLiveQueries"
+        },
+        "execution_insights": {
+          "$ref": "#/$defs/CockroachExecutionInsights"
+        },
+        "contention": {
+          "$ref": "#/$defs/CockroachContention"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "live_queries",
+        "execution_insights",
+        "contention"
+      ]
+    },
+    "CockroachDistribution": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "live_stores": {
+          "type": "integer"
+        },
+        "comparable_stores": {
+          "type": "integer"
+        },
+        "excluded_stores": {
+          "type": "integer"
+        },
+        "multiple_localities": {
+          "type": "boolean"
+        },
+        "replica_mean": {
+          "type": "number"
+        },
+        "replica_min": {
+          "type": "integer"
+        },
+        "replica_max": {
+          "type": "integer"
+        },
+        "replica_min_to_mean": {
+          "type": "number"
+        },
+        "replica_max_to_mean": {
+          "type": "number"
+        },
+        "fewest_replicas_store_id": {
+          "type": "integer"
+        },
+        "most_replicas_store_id": {
+          "type": "integer"
+        },
+        "lease_mean": {
+          "type": "number"
+        },
+        "lease_min": {
+          "type": "integer"
+        },
+        "lease_max": {
+          "type": "integer"
+        },
+        "lease_min_to_mean": {
+          "type": "number"
+        },
+        "lease_max_to_mean": {
+          "type": "number"
+        },
+        "fewest_leases_store_id": {
+          "type": "integer"
+        },
+        "most_leases_store_id": {
+          "type": "integer"
+        },
+        "capacity_used_min_ratio": {
+          "type": "number"
+        },
+        "capacity_used_max_ratio": {
+          "type": "number"
+        },
+        "capacity_used_spread": {
+          "type": "number"
+        },
+        "least_used_store_id": {
+          "type": "integer"
+        },
+        "most_used_store_id": {
+          "type": "integer"
+        },
+        "hot_range_sample_count": {
+          "type": "integer"
+        },
+        "hot_range_leaseholder_samples": {
+          "type": "integer"
+        },
+        "hot_range_cpu_cores": {
+          "type": "number"
+        },
+        "hottest_leaseholder_node_id": {
+          "type": "integer"
+        },
+        "hottest_leaseholder_ranges": {
+          "type": "integer"
+        },
+        "hottest_leaseholder_cpu_cores": {
+          "type": "number"
+        },
+        "hottest_leaseholder_cpu_share": {
+          "type": "number"
+        },
+        "stores": {
+          "items": {
+            "$ref": "#/$defs/CockroachStoreBalance"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "live_stores",
+        "comparable_stores",
+        "excluded_stores",
+        "replica_mean",
+        "replica_min",
+        "replica_max",
+        "replica_min_to_mean",
+        "replica_max_to_mean",
+        "lease_mean",
+        "lease_min",
+        "lease_max",
+        "lease_min_to_mean",
+        "lease_max_to_mean",
+        "capacity_used_min_ratio",
+        "capacity_used_max_ratio",
+        "capacity_used_spread",
+        "hot_range_sample_count",
+        "hot_range_leaseholder_samples",
+        "hot_range_cpu_cores"
+      ]
+    },
+    "CockroachExecutionInsights": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/CockroachInsight"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness"
+      ]
+    },
+    "CockroachHealth": {
+      "properties": {
+        "admin_api": {
+          "$ref": "#/$defs/Section"
+        },
+        "prometheus": {
+          "$ref": "#/$defs/Section"
+        },
+        "jobs": {
+          "$ref": "#/$defs/Section"
+        },
+        "hot_ranges": {
+          "$ref": "#/$defs/Section"
+        },
+        "distribution": {
+          "$ref": "#/$defs/CockroachDistribution"
+        },
+        "storage_replication": {
+          "$ref": "#/$defs/CockroachStorage"
+        },
+        "nodes_total": {
+          "type": "integer"
+        },
+        "nodes_live": {
+          "type": "integer"
+        },
+        "nodes_suspect": {
+          "type": "integer"
+        },
+        "nodes_draining": {
+          "type": "integer"
+        },
+        "nodes_decommissioned": {
+          "type": "integer"
+        },
+        "stores_total": {
+          "type": "integer"
+        },
+        "range_replicas": {
+          "type": "integer"
+        },
+        "unavailable_ranges": {
+          "type": "integer"
+        },
+        "underreplicated_ranges": {
+          "type": "integer"
+        },
+        "capacity_bytes": {
+          "type": "integer"
+        },
+        "available_bytes": {
+          "type": "integer"
+        },
+        "max_store_used_ratio": {
+          "type": "number"
+        },
+        "max_cpu_percent": {
+          "type": "number"
+        },
+        "max_memory_used_ratio": {
+          "type": "number"
+        },
+        "sql_connections": {
+          "type": "integer"
+        },
+        "queries_per_sec": {
+          "type": "number"
+        },
+        "new_connections_per_sec": {
+          "type": "number"
+        },
+        "service_latency_p99_ms": {
+          "type": "number"
+        },
+        "admission_wait_p99_ms": {
+          "type": "number"
+        },
+        "admission_queue_max": {
+          "type": "integer"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/CockroachNodeHealth"
+          },
+          "type": "array"
+        },
+        "stores": {
+          "items": {
+            "$ref": "#/$defs/CockroachStoreHealth"
+          },
+          "type": "array"
+        },
+        "hottest_ranges": {
+          "items": {
+            "$ref": "#/$defs/CockroachHotRange"
+          },
+          "type": "array"
+        },
+        "jobs_total": {
+          "type": "integer"
+        },
+        "jobs_bounded": {
+          "type": "boolean"
+        },
+        "job_items": {
+          "items": {
+            "$ref": "#/$defs/CockroachJobHealth"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "admin_api",
+        "prometheus",
+        "jobs",
+        "hot_ranges",
+        "distribution",
+        "storage_replication",
+        "nodes_total",
+        "nodes_live",
+        "nodes_suspect",
+        "nodes_draining",
+        "nodes_decommissioned",
+        "stores_total",
+        "range_replicas",
+        "unavailable_ranges",
+        "underreplicated_ranges",
+        "capacity_bytes",
+        "available_bytes",
+        "max_store_used_ratio",
+        "max_cpu_percent",
+        "max_memory_used_ratio",
+        "sql_connections",
+        "jobs_total"
+      ]
+    },
+    "CockroachHotRange": {
+      "properties": {
+        "range_id": {
+          "type": "integer"
+        },
+        "node_id": {
+          "type": "integer"
+        },
+        "store_id": {
+          "type": "integer"
+        },
+        "leaseholder_node_id": {
+          "type": "integer"
+        },
+        "qps": {
+          "type": "number"
+        },
+        "cpu_cores": {
+          "type": "number"
+        },
+        "reads_per_sec": {
+          "type": "number"
+        },
+        "writes_per_sec": {
+          "type": "number"
+        },
+        "databases": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "tables": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "indexes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "range_id",
+        "node_id",
+        "store_id",
+        "leaseholder_node_id",
+        "qps",
+        "cpu_cores",
+        "reads_per_sec",
+        "writes_per_sec"
+      ]
+    },
+    "CockroachInsight": {
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "fingerprint": {
+          "type": "string"
+        },
+        "problem": {
+          "type": "string"
+        },
+        "causes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "query": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "ended_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "full_scan": {
+          "type": "boolean"
+        },
+        "user": {
+          "type": "string"
+        },
+        "application_name": {
+          "type": "string"
+        },
+        "retries": {
+          "type": "integer"
+        },
+        "last_retry_reason": {
+          "type": "string"
+        },
+        "index_recommendations": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "rows_read": {
+          "type": "integer"
+        },
+        "rows_written": {
+          "type": "integer"
+        },
+        "contention_seconds": {
+          "type": "number"
+        },
+        "service_latency_ms": {
+          "type": "number"
+        },
+        "admission_wait_ms": {
+          "type": "number"
+        },
+        "error_code": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "problem",
+        "status"
+      ]
+    },
+    "CockroachJobHealth": {
+      "properties": {
+        "job_id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finished_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "progress": {
+          "type": "number"
+        },
+        "progress_known": {
+          "type": "boolean"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "status_message": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "last_updated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "high_water_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "job_id",
+        "type",
+        "state",
+        "created_at",
+        "progress"
+      ]
+    },
+    "CockroachLiveQueries": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/CockroachLiveQuery"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness"
+      ]
+    },
+    "CockroachLiveQuery": {
+      "properties": {
+        "query_id": {
+          "type": "string"
+        },
+        "user": {
+          "type": "string"
+        },
+        "application_name": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "age_seconds": {
+          "type": "number"
+        },
+        "distributed": {
+          "type": "boolean"
+        },
+        "full_scan": {
+          "type": "boolean"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "isolation_level": {
+          "type": "string"
+        },
+        "retries": {
+          "type": "integer"
+        },
+        "auto_retries": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "query_id",
+        "user",
+        "query",
+        "age_seconds",
+        "distributed",
+        "full_scan",
+        "retries",
+        "auto_retries"
+      ]
+    },
+    "CockroachNodeHealth": {
+      "properties": {
+        "node_id": {
+          "type": "integer"
+        },
+        "status": {
+          "type": "string"
+        },
+        "locality": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "cpu_percent": {
+          "type": "number"
+        },
+        "rss_bytes": {
+          "type": "integer"
+        },
+        "memory_bytes": {
+          "type": "integer"
+        },
+        "memory_used_ratio": {
+          "type": "number"
+        },
+        "sql_connections": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "node_id",
+        "status",
+        "sql_connections"
+      ]
+    },
+    "CockroachStorage": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "live_stores": {
+          "type": "integer"
+        },
+        "mvcc_metrics_available": {
+          "type": "boolean"
+        },
+        "replication_metrics_available": {
+          "type": "boolean"
+        },
+        "counter_sampled_stores": {
+          "type": "integer"
+        },
+        "sample_seconds": {
+          "type": "number"
+        },
+        "filesystem_used_bytes": {
+          "type": "integer"
+        },
+        "cockroach_used_bytes": {
+          "type": "integer"
+        },
+        "other_used_bytes": {
+          "type": "integer"
+        },
+        "max_other_used_ratio": {
+          "type": "number"
+        },
+        "max_other_used_store_id": {
+          "type": "integer"
+        },
+        "mvcc_live_bytes": {
+          "type": "integer"
+        },
+        "mvcc_total_bytes": {
+          "type": "integer"
+        },
+        "mvcc_garbage_bytes": {
+          "type": "integer"
+        },
+        "mvcc_live_ratio": {
+          "type": "number"
+        },
+        "bytes_per_replica_min": {
+          "type": "number"
+        },
+        "bytes_per_replica_mean": {
+          "type": "number"
+        },
+        "bytes_per_replica_max": {
+          "type": "number"
+        },
+        "smallest_replica_bytes_store_id": {
+          "type": "integer"
+        },
+        "largest_replica_bytes_store_id": {
+          "type": "integer"
+        },
+        "range_replicas": {
+          "type": "integer"
+        },
+        "uninitialized_replicas": {
+          "type": "integer"
+        },
+        "reserved_replicas": {
+          "type": "integer"
+        },
+        "overreplicated_ranges": {
+          "type": "integer"
+        },
+        "decommissioning_ranges": {
+          "type": "integer"
+        },
+        "raft_commands_pending": {
+          "type": "integer"
+        },
+        "max_raft_commands_pending": {
+          "type": "integer"
+        },
+        "max_raft_pending_store_id": {
+          "type": "integer"
+        },
+        "raft_probe_flows": {
+          "type": "integer"
+        },
+        "raft_snapshot_flows": {
+          "type": "integer"
+        },
+        "replicate_queue_pending": {
+          "type": "integer"
+        },
+        "replicate_queue_purgatory": {
+          "type": "integer"
+        },
+        "raft_snapshot_queue_pending": {
+          "type": "integer"
+        },
+        "disk_slow_events": {
+          "type": "integer"
+        },
+        "disk_stalled_events": {
+          "type": "integer"
+        },
+        "disk_unhealthy_seconds": {
+          "type": "number"
+        },
+        "write_stall_events": {
+          "type": "integer"
+        },
+        "write_stall_seconds": {
+          "type": "number"
+        },
+        "raft_dropped_messages": {
+          "type": "integer"
+        },
+        "stores": {
+          "items": {
+            "$ref": "#/$defs/CockroachStoreStorage"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "live_stores",
+        "mvcc_metrics_available",
+        "replication_metrics_available",
+        "counter_sampled_stores",
+        "filesystem_used_bytes",
+        "cockroach_used_bytes",
+        "other_used_bytes",
+        "max_other_used_ratio",
+        "mvcc_live_bytes",
+        "mvcc_total_bytes",
+        "mvcc_garbage_bytes",
+        "mvcc_live_ratio",
+        "bytes_per_replica_min",
+        "bytes_per_replica_mean",
+        "bytes_per_replica_max",
+        "range_replicas",
+        "uninitialized_replicas",
+        "reserved_replicas",
+        "overreplicated_ranges",
+        "decommissioning_ranges",
+        "raft_commands_pending",
+        "max_raft_commands_pending",
+        "raft_probe_flows",
+        "raft_snapshot_flows",
+        "replicate_queue_pending",
+        "replicate_queue_purgatory",
+        "raft_snapshot_queue_pending",
+        "disk_slow_events",
+        "disk_stalled_events",
+        "disk_unhealthy_seconds",
+        "write_stall_events",
+        "write_stall_seconds",
+        "raft_dropped_messages"
+      ]
+    },
+    "CockroachStoreBalance": {
+      "properties": {
+        "node_id": {
+          "type": "integer"
+        },
+        "store_id": {
+          "type": "integer"
+        },
+        "status": {
+          "type": "string"
+        },
+        "locality": {
+          "type": "string"
+        },
+        "comparable": {
+          "type": "boolean"
+        },
+        "capacity_bytes": {
+          "type": "integer"
+        },
+        "used_ratio": {
+          "type": "number"
+        },
+        "range_replicas": {
+          "type": "integer"
+        },
+        "leaseholders": {
+          "type": "integer"
+        },
+        "node_cpu_percent": {
+          "type": "number"
+        },
+        "top_hot_ranges": {
+          "type": "integer"
+        },
+        "top_hot_cpu_cores": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "node_id",
+        "store_id",
+        "status",
+        "comparable",
+        "capacity_bytes",
+        "used_ratio",
+        "range_replicas",
+        "leaseholders"
+      ]
+    },
+    "CockroachStoreHealth": {
+      "properties": {
+        "node_id": {
+          "type": "integer"
+        },
+        "store_id": {
+          "type": "integer"
+        },
+        "capacity_bytes": {
+          "type": "integer"
+        },
+        "available_bytes": {
+          "type": "integer"
+        },
+        "used_ratio": {
+          "type": "number"
+        },
+        "range_replicas": {
+          "type": "integer"
+        },
+        "leaseholders": {
+          "type": "integer"
+        },
+        "unavailable_ranges": {
+          "type": "integer"
+        },
+        "underreplicated_ranges": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "node_id",
+        "store_id",
+        "capacity_bytes",
+        "available_bytes",
+        "used_ratio",
+        "range_replicas",
+        "leaseholders",
+        "unavailable_ranges",
+        "underreplicated_ranges"
+      ]
+    },
+    "CockroachStoreStorage": {
+      "properties": {
+        "node_id": {
+          "type": "integer"
+        },
+        "store_id": {
+          "type": "integer"
+        },
+        "status": {
+          "type": "string"
+        },
+        "locality": {
+          "type": "string"
+        },
+        "capacity_bytes": {
+          "type": "integer"
+        },
+        "filesystem_used_bytes": {
+          "type": "integer"
+        },
+        "cockroach_used_bytes": {
+          "type": "integer"
+        },
+        "other_used_bytes": {
+          "type": "integer"
+        },
+        "other_used_ratio": {
+          "type": "number"
+        },
+        "mvcc_live_bytes": {
+          "type": "integer"
+        },
+        "mvcc_total_bytes": {
+          "type": "integer"
+        },
+        "mvcc_garbage_bytes": {
+          "type": "integer"
+        },
+        "bytes_per_replica": {
+          "type": "number"
+        },
+        "range_replicas": {
+          "type": "integer"
+        },
+        "uninitialized_replicas": {
+          "type": "integer"
+        },
+        "reserved_replicas": {
+          "type": "integer"
+        },
+        "overreplicated_ranges": {
+          "type": "integer"
+        },
+        "decommissioning_ranges": {
+          "type": "integer"
+        },
+        "raft_commands_pending": {
+          "type": "integer"
+        },
+        "raft_probe_flows": {
+          "type": "integer"
+        },
+        "raft_snapshot_flows": {
+          "type": "integer"
+        },
+        "replicate_queue_pending": {
+          "type": "integer"
+        },
+        "replicate_queue_purgatory": {
+          "type": "integer"
+        },
+        "raft_snapshot_queue_pending": {
+          "type": "integer"
+        },
+        "disk_slow_events": {
+          "type": "integer"
+        },
+        "disk_stalled_events": {
+          "type": "integer"
+        },
+        "disk_unhealthy_seconds": {
+          "type": "number"
+        },
+        "write_stall_events": {
+          "type": "integer"
+        },
+        "write_stall_seconds": {
+          "type": "number"
+        },
+        "raft_dropped_messages": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "node_id",
+        "store_id",
+        "status",
+        "capacity_bytes",
+        "filesystem_used_bytes",
+        "cockroach_used_bytes",
+        "other_used_bytes",
+        "other_used_ratio",
+        "mvcc_live_bytes",
+        "mvcc_total_bytes",
+        "mvcc_garbage_bytes",
+        "bytes_per_replica",
+        "range_replicas",
+        "uninitialized_replicas",
+        "reserved_replicas",
+        "overreplicated_ranges",
+        "decommissioning_ranges",
+        "raft_commands_pending",
+        "raft_probe_flows",
+        "raft_snapshot_flows",
+        "replicate_queue_pending",
+        "replicate_queue_purgatory",
+        "raft_snapshot_queue_pending",
+        "disk_slow_events",
+        "disk_stalled_events",
+        "disk_unhealthy_seconds",
+        "write_stall_events",
+        "write_stall_seconds",
+        "raft_dropped_messages"
+      ]
+    },
+    "ConnGroup": {
+      "properties": {
+        "app_name": {
+          "type": "string"
+        },
+        "user": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "app_name",
+        "user",
+        "state",
+        "count"
+      ]
+    },
+    "Context": {
+      "properties": {
+        "schema_version": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "collected_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "fingerprint": {
+          "type": "string"
+        },
+        "server": {
+          "$ref": "#/$defs/ServerInfo"
+        },
+        "window": {
+          "$ref": "#/$defs/Window"
+        },
+        "health": {
+          "$ref": "#/$defs/Health"
+        },
+        "activity": {
+          "$ref": "#/$defs/Activity"
+        },
+        "cockroachdb": {
+          "$ref": "#/$defs/CockroachDB"
+        },
+        "locks": {
+          "$ref": "#/$defs/Locks"
+        },
+        "queries": {
+          "$ref": "#/$defs/Queries"
+        },
+        "tables": {
+          "$ref": "#/$defs/Tables"
+        },
+        "indexes": {
+          "$ref": "#/$defs/Indexes"
+        },
+        "wal": {
+          "$ref": "#/$defs/WAL"
+        },
+        "io": {
+          "$ref": "#/$defs/IO"
+        },
+        "replication": {
+          "$ref": "#/$defs/Replication"
+        },
+        "settings": {
+          "$ref": "#/$defs/Settings"
+        },
+        "limits": {
+          "$ref": "#/$defs/Limits"
+        },
+        "horizon": {
+          "$ref": "#/$defs/VacuumHorizon"
+        },
+        "sequences": {
+          "$ref": "#/$defs/Sequences"
+        },
+        "progress": {
+          "$ref": "#/$defs/Progress"
+        },
+        "archiver": {
+          "$ref": "#/$defs/Archiver"
+        },
+        "checksums": {
+          "$ref": "#/$defs/Checksums"
+        },
+        "standby": {
+          "$ref": "#/$defs/StandbyStatus"
+        },
+        "deltas": {
+          "$ref": "#/$defs/Deltas"
+        },
+        "delta_suppressed_reason": {
+          "type": "string"
+        },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/Event"
+          },
+          "type": "array"
+        },
+        "wait_profile": {
+          "$ref": "#/$defs/WaitProfile"
+        },
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/Finding"
+          },
+          "type": "array"
+        },
+        "config_warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "collected_at",
+        "fingerprint",
+        "server",
+        "window",
+        "findings"
+      ]
+    },
+    "Delta": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "severity": {
+          "type": "string"
+        },
+        "before": {
+          "type": "number"
+        },
+        "after": {
+          "type": "number"
+        },
+        "pct_change": {
+          "type": "number"
+        },
+        "first_observed": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id",
+        "subject",
+        "severity",
+        "before",
+        "after"
+      ]
+    },
+    "Deltas": {
+      "properties": {
+        "against": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "yesterday_hour": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "changes": {
+          "items": {
+            "$ref": "#/$defs/Delta"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "against",
+        "changes"
+      ]
+    },
+    "Event": {
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "object": {
+          "type": "string"
+        },
+        "before": {
+          "type": "string"
+        },
+        "after": {
+          "type": "string"
+        },
+        "occurred_after": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "occurred_before": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "confidence": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "confidence"
+      ]
+    },
+    "Finding": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "object": {
+          "type": "string"
+        },
+        "severity": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "objects": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "remediation": {
+          "type": "string"
+        },
+        "impact": {
+          "$ref": "#/$defs/Impact"
+        },
+        "confidence": {
+          "type": "number"
+        },
+        "caveats": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "related": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "safety": {
+          "$ref": "#/$defs/Safety"
+        },
+        "suppressed": {
+          "type": "boolean"
+        },
+        "suppression_reason": {
+          "type": "string"
+        },
+        "suppression_rule": {
+          "type": "string"
+        },
+        "severity_remapped": {
+          "type": "string"
+        },
+        "cluster_scoped": {
+          "type": "boolean"
+        },
+        "preexisting": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id",
+        "severity",
+        "title",
+        "detail",
+        "impact",
+        "confidence"
+      ]
+    },
+    "Health": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "connections": {
+          "type": "integer"
+        },
+        "tps": {
+          "type": "number"
+        },
+        "commits_per_sec": {
+          "type": "number"
+        },
+        "rollbacks_per_sec": {
+          "type": "number"
+        },
+        "rollback_ratio": {
+          "type": "number"
+        },
+        "cache_hit_ratio": {
+          "type": "number"
+        },
+        "cache_blocks_sampled": {
+          "type": "integer"
+        },
+        "deadlocks_per_min": {
+          "type": "number"
+        },
+        "temp_bytes_per_sec": {
+          "type": "number"
+        },
+        "tuples_returned_per_sec": {
+          "type": "number"
+        },
+        "tuples_written_per_sec": {
+          "type": "number"
+        },
+        "cockroachdb": {
+          "$ref": "#/$defs/CockroachHealth"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "connections"
+      ]
+    },
+    "HorizonHolder": {
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "holder": {
+          "type": "string"
+        },
+        "xmin_age": {
+          "type": "integer"
+        },
+        "age_s": {
+          "type": "number"
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "source",
+        "holder",
+        "xmin_age"
+      ]
+    },
+    "IO": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "checkpoints_timed": {
+          "type": "integer"
+        },
+        "checkpoints_requested": {
+          "type": "integer"
+        },
+        "buffers_written_per_sec": {
+          "type": "number"
+        },
+        "backend_fsyncs": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "checkpoints_timed",
+        "checkpoints_requested",
+        "backend_fsyncs"
+      ]
+    },
+    "Impact": {
+      "properties": {
+        "score": {
+          "type": "number"
+        },
+        "dimension": {
+          "type": "string"
+        },
+        "estimate": {
+          "type": "string"
+        },
+        "basis": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "score",
+        "dimension",
+        "estimate",
+        "basis"
+      ]
+    },
+    "IndexStat": {
+      "properties": {
+        "database": {
+          "type": "string"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "index": {
+          "type": "string"
+        },
+        "scans": {
+          "type": "integer"
+        },
+        "bytes": {
+          "type": "integer"
+        },
+        "definition": {
+          "type": "string"
+        },
+        "columns": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "method": {
+          "type": "string"
+        },
+        "unique": {
+          "type": "boolean"
+        },
+        "primary": {
+          "type": "boolean"
+        },
+        "partial": {
+          "type": "boolean"
+        },
+        "expression": {
+          "type": "boolean"
+        },
+        "writes": {
+          "type": "integer"
+        },
+        "last_read": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "last_write": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "index_type": {
+          "type": "string"
+        },
+        "inverted": {
+          "type": "boolean"
+        },
+        "sharded": {
+          "type": "boolean"
+        },
+        "invisible": {
+          "type": "boolean"
+        },
+        "unused_for_seconds": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema",
+        "table",
+        "index",
+        "scans",
+        "bytes"
+      ]
+    },
+    "Indexes": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "total": {
+          "type": "integer"
+        },
+        "scanned": {
+          "type": "integer"
+        },
+        "secondary_total": {
+          "type": "integer"
+        },
+        "stats_source": {
+          "type": "string"
+        },
+        "counters_durable": {
+          "type": "boolean"
+        },
+        "write_counters_available": {
+          "type": "boolean"
+        },
+        "unused_threshold_hours": {
+          "type": "integer"
+        },
+        "unused": {
+          "items": {
+            "$ref": "#/$defs/IndexStat"
+          },
+          "type": "array"
+        },
+        "usage": {
+          "items": {
+            "$ref": "#/$defs/IndexStat"
+          },
+          "type": "array"
+        },
+        "most_written": {
+          "items": {
+            "$ref": "#/$defs/IndexStat"
+          },
+          "type": "array"
+        },
+        "largest": {
+          "items": {
+            "$ref": "#/$defs/IndexStat"
+          },
+          "type": "array"
+        },
+        "redundant": {
+          "items": {
+            "$ref": "#/$defs/RedundantIndex"
+          },
+          "type": "array"
+        },
+        "unindexed_fks": {
+          "items": {
+            "$ref": "#/$defs/UnindexedFK"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "total",
+        "scanned",
+        "counters_durable",
+        "write_counters_available"
+      ]
+    },
+    "Limits": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "connections_used": {
+          "type": "integer"
+        },
+        "connections_max": {
+          "type": "integer"
+        },
+        "max_xid_age": {
+          "type": "integer"
+        },
+        "max_mxid_age": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "connections_used",
+        "connections_max",
+        "max_xid_age"
+      ]
+    },
+    "Locks": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "blocked_count": {
+          "type": "integer"
+        },
+        "chains": {
+          "items": {
+            "$ref": "#/$defs/BlockingRow"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "blocked_count"
+      ]
+    },
+    "NarrowIdentityColumn": {
+      "properties": {
+        "schema": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "column": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema",
+        "table",
+        "column",
+        "type"
+      ]
+    },
+    "PartitionRollup": {
+      "properties": {
+        "schema": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "partitions": {
+          "type": "integer"
+        },
+        "total_bytes": {
+          "type": "integer"
+        },
+        "live_tuples": {
+          "type": "integer"
+        },
+        "seq_scans": {
+          "type": "integer"
+        },
+        "index_scans": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema",
+        "table",
+        "partitions",
+        "total_bytes",
+        "live_tuples",
+        "seq_scans",
+        "index_scans"
+      ]
+    },
+    "Progress": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "operations": {
+          "items": {
+            "$ref": "#/$defs/ProgressOp"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness"
+      ]
+    },
+    "ProgressOp": {
+      "properties": {
+        "pid": {
+          "type": "integer"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "relation": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "pct": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "pid",
+        "operation"
+      ]
+    },
+    "Queries": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "total_exec_ms": {
+          "type": "number"
+        },
+        "pgss_dealloc": {
+          "type": "integer"
+        },
+        "pgss_count": {
+          "type": "integer"
+        },
+        "pgss_max": {
+          "type": "integer"
+        },
+        "stats_source": {
+          "type": "string"
+        },
+        "window_hours": {
+          "type": "integer"
+        },
+        "bounded": {
+          "type": "boolean"
+        },
+        "top": {
+          "items": {
+            "$ref": "#/$defs/QueryStat"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "enabled"
+      ]
+    },
+    "QueryStat": {
+      "properties": {
+        "queryid": {
+          "type": "integer"
+        },
+        "fingerprint": {
+          "type": "string"
+        },
+        "application_name": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "calls": {
+          "type": "integer"
+        },
+        "total_ms": {
+          "type": "number"
+        },
+        "mean_ms": {
+          "type": "number"
+        },
+        "max_ms": {
+          "type": "number"
+        },
+        "p99_ms": {
+          "type": "number"
+        },
+        "rows": {
+          "type": "integer"
+        },
+        "rows_read": {
+          "type": "integer"
+        },
+        "rows_written": {
+          "type": "integer"
+        },
+        "bytes_read": {
+          "type": "integer"
+        },
+        "contention_ms": {
+          "type": "number"
+        },
+        "max_retries": {
+          "type": "integer"
+        },
+        "cache_hit": {
+          "type": "number"
+        },
+        "wal_bytes": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "queryid",
+        "query",
+        "calls",
+        "total_ms",
+        "mean_ms",
+        "max_ms",
+        "rows",
+        "wal_bytes"
+      ]
+    },
+    "QueryWaits": {
+      "properties": {
+        "query_id": {
+          "type": "integer"
+        },
+        "sample_text": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer"
+        },
+        "share": {
+          "type": "number"
+        },
+        "lock_share": {
+          "type": "number"
+        },
+        "io_share": {
+          "type": "number"
+        },
+        "top_type": {
+          "type": "string"
+        },
+        "top_event": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "query_id",
+        "count",
+        "share",
+        "lock_share",
+        "io_share"
+      ]
+    },
+    "RedundantIndex": {
+      "properties": {
+        "schema": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "index": {
+          "type": "string"
+        },
+        "covered_by": {
+          "type": "string"
+        },
+        "bytes": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema",
+        "table",
+        "index",
+        "covered_by",
+        "bytes"
+      ]
+    },
+    "ReplicaRow": {
+      "properties": {
+        "client_addr": {
+          "type": "string"
+        },
+        "application_name": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "sync_state": {
+          "type": "string"
+        },
+        "sync_priority": {
+          "type": "integer"
+        },
+        "replay_lag_sec": {
+          "type": "number"
+        },
+        "write_lag_bytes": {
+          "type": "integer"
+        },
+        "flush_lag_bytes": {
+          "type": "integer"
+        },
+        "replay_lag_bytes": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "client_addr",
+        "state",
+        "sync_state",
+        "write_lag_bytes",
+        "flush_lag_bytes",
+        "replay_lag_bytes"
+      ]
+    },
+    "Replication": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "is_replica": {
+          "type": "boolean"
+        },
+        "replicas": {
+          "items": {
+            "$ref": "#/$defs/ReplicaRow"
+          },
+          "type": "array"
+        },
+        "receiver_lag_sec": {
+          "type": "number"
+        },
+        "slots": {
+          "items": {
+            "$ref": "#/$defs/ReplicationSlot"
+          },
+          "type": "array"
+        },
+        "subscriptions": {
+          "items": {
+            "$ref": "#/$defs/Subscription"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "is_replica"
+      ]
+    },
+    "ReplicationSlot": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "database": {
+          "type": "string"
+        },
+        "retained_bytes": {
+          "type": "integer"
+        },
+        "wal_status": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "type",
+        "active",
+        "retained_bytes"
+      ]
+    },
+    "Safety": {
+      "properties": {
+        "blocking_caveats": {
+          "items": {
+            "$ref": "#/$defs/SafetyGuard"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "blocking_caveats"
+      ]
+    },
+    "SafetyGuard": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "verify": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "action",
+        "text",
+        "verify"
+      ]
+    },
+    "Section": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness"
+      ]
+    },
+    "SequenceUsage": {
+      "properties": {
+        "schema": {
+          "type": "string"
+        },
+        "sequence": {
+          "type": "string"
+        },
+        "last_value": {
+          "type": "integer"
+        },
+        "ceiling": {
+          "type": "integer"
+        },
+        "pct_used": {
+          "type": "number"
+        },
+        "owned_by": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema",
+        "sequence",
+        "last_value",
+        "ceiling",
+        "pct_used"
+      ]
+    },
+    "Sequences": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/SequenceUsage"
+          },
+          "type": "array"
+        },
+        "narrow_identity": {
+          "items": {
+            "$ref": "#/$defs/NarrowIdentityColumn"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness"
+      ]
+    },
+    "ServerInfo": {
+      "properties": {
+        "engine": {
+          "type": "string"
+        },
+        "version_num": {
+          "type": "integer"
+        },
+        "version_text": {
+          "type": "string"
+        },
+        "database": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "in_recovery": {
+          "type": "boolean"
+        },
+        "via_pooler": {
+          "type": "boolean"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "uptime_seconds": {
+          "type": "integer"
+        },
+        "extensions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "has_pg_monitor": {
+          "type": "boolean"
+        },
+        "has_view_activity": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "engine",
+        "version_num",
+        "version_text",
+        "database",
+        "uptime_seconds",
+        "extensions",
+        "capabilities",
+        "has_pg_monitor"
+      ]
+    },
+    "Settings": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "overrides": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "params": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "overrides"
+      ]
+    },
+    "StandbyStatus": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "confl_tablespace": {
+          "type": "integer"
+        },
+        "confl_lock": {
+          "type": "integer"
+        },
+        "confl_snapshot": {
+          "type": "integer"
+        },
+        "confl_bufferpin": {
+          "type": "integer"
+        },
+        "confl_deadlock": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "confl_tablespace",
+        "confl_lock",
+        "confl_snapshot",
+        "confl_bufferpin",
+        "confl_deadlock"
+      ]
+    },
+    "Subscription": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "worker_running": {
+          "type": "boolean"
+        },
+        "last_msg_age_sec": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "worker_running"
+      ]
+    },
+    "TableStat": {
+      "properties": {
+        "database": {
+          "type": "string"
+        },
+        "table_id": {
+          "type": "integer"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "total_bytes": {
+          "type": "integer"
+        },
+        "live_tuples": {
+          "type": "integer"
+        },
+        "dead_tuples": {
+          "type": "integer"
+        },
+        "dead_ratio": {
+          "type": "number"
+        },
+        "seq_scans": {
+          "type": "integer"
+        },
+        "index_scans": {
+          "type": "integer"
+        },
+        "mods_since_analyze": {
+          "type": "integer"
+        },
+        "updates": {
+          "type": "integer"
+        },
+        "hot_updates": {
+          "type": "integer"
+        },
+        "last_analyze": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "last_autoanalyze": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "analyze_scale_override": {
+          "type": "number"
+        },
+        "analyze_threshold_override": {
+          "type": "number"
+        },
+        "autovacuum_count": {
+          "type": "integer"
+        },
+        "autovacuum_disabled": {
+          "type": "boolean"
+        },
+        "vacuum_scale_override": {
+          "type": "number"
+        },
+        "vacuum_threshold_override": {
+          "type": "number"
+        },
+        "last_vacuum": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "last_autovacuum": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "replicated_bytes": {
+          "type": "integer"
+        },
+        "live_data_bytes": {
+          "type": "integer"
+        },
+        "data_bytes": {
+          "type": "integer"
+        },
+        "live_data_ratio": {
+          "type": "number"
+        },
+        "range_count": {
+          "type": "integer"
+        },
+        "replica_count": {
+          "type": "integer"
+        },
+        "store_ids": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "column_count": {
+          "type": "integer"
+        },
+        "index_count": {
+          "type": "integer"
+        },
+        "auto_stats_enabled": {
+          "type": "boolean"
+        },
+        "stats_last_updated": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "metadata_last_updated": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "metadata_error": {
+          "type": "string"
+        },
+        "top_hot_range_count": {
+          "type": "integer"
+        },
+        "top_hot_range_qps": {
+          "type": "number"
+        },
+        "top_hot_range_cpu_cores": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema",
+        "table",
+        "total_bytes",
+        "live_tuples",
+        "dead_tuples",
+        "dead_ratio",
+        "seq_scans",
+        "index_scans",
+        "mods_since_analyze"
+      ]
+    },
+    "Tables": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "db_size_bytes": {
+          "type": "integer"
+        },
+        "total": {
+          "type": "integer"
+        },
+        "scanned": {
+          "type": "integer"
+        },
+        "stats_source": {
+          "type": "string"
+        },
+        "size_kind": {
+          "type": "string"
+        },
+        "metadata_bounded": {
+          "type": "boolean"
+        },
+        "metadata_oldest_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "metadata_newest_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "top": {
+          "items": {
+            "$ref": "#/$defs/TableStat"
+          },
+          "type": "array"
+        },
+        "partitioned": {
+          "items": {
+            "$ref": "#/$defs/PartitionRollup"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "db_size_bytes",
+        "metadata_bounded"
+      ]
+    },
+    "UnindexedFK": {
+      "properties": {
+        "schema": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "constraint": {
+          "type": "string"
+        },
+        "columns": {
+          "type": "string"
+        },
+        "child_bytes": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema",
+        "table",
+        "constraint",
+        "columns",
+        "child_bytes"
+      ]
+    },
+    "VacuumHorizon": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "holders": {
+          "items": {
+            "$ref": "#/$defs/HorizonHolder"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness"
+      ]
+    },
+    "WAL": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "bytes_per_sec": {
+          "type": "number"
+        },
+        "records_per_sec": {
+          "type": "number"
+        },
+        "buffers_full": {
+          "type": "integer"
+        },
+        "dir_bytes": {
+          "type": "integer"
+        },
+        "dir_files": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "buffers_full"
+      ]
+    },
+    "WaitBucket": {
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer"
+        },
+        "share": {
+          "type": "number"
+        },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/WaitEvent"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "count",
+        "share"
+      ]
+    },
+    "WaitEvent": {
+      "properties": {
+        "event": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer"
+        },
+        "share": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event",
+        "count",
+        "share"
+      ]
+    },
+    "WaitProfile": {
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "samples": {
+          "type": "integer"
+        },
+        "window_seconds": {
+          "type": "number"
+        },
+        "buckets": {
+          "items": {
+            "$ref": "#/$defs/WaitBucket"
+          },
+          "type": "array"
+        },
+        "by_query": {
+          "items": {
+            "$ref": "#/$defs/QueryWaits"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "available",
+        "samples",
+        "window_seconds"
+      ]
+    },
+    "Window": {
+      "properties": {
+        "sample_seconds": {
+          "type": "number"
+        },
+        "stats_reset_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "postmaster_start_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "window_age_seconds": {
+          "type": "integer"
+        },
+        "stats_window_days": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "sample_seconds"
+      ]
+    }
+  },
+  "description": "pgbot inspect --json — the versioned Context contract for agents and scripts."
+}
