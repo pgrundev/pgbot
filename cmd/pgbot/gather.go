@@ -30,7 +30,7 @@ func gather(ctx context.Context, connString string, f inspectFlags) (*model.Cont
 		fmt.Fprintln(os.Stderr, target.Pooler.Note())
 	}
 
-	c, err := collect.Run(ctx, target, collect.Options{Interval: f.interval, ASHHz: f.ashHz, ASHWindow: f.window})
+	c, err := collect.Run(ctx, target, gatherOptions(f))
 	if err != nil {
 		return nil, "", fmt.Errorf("collect: %s", conn.RedactConnString(err.Error()))
 	}
@@ -45,4 +45,8 @@ func gather(ctx context.Context, connString string, f inspectFlags) (*model.Cont
 		return nil, "", err
 	}
 	return c, host, nil
+}
+
+func gatherOptions(f inspectFlags) collect.Options {
+	return collect.Options{Interval: f.interval, ASHHz: f.ashHz, ASHWindow: f.window, Deadline: f.timeout}
 }
