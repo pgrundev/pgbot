@@ -8,3 +8,5 @@ pgrun_metrcis2.mp4
 
 # npm packaging build output (assembled by npm/build.mjs)
 npm/staging/
+
+result
