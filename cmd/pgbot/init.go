@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/pgrundev/pgbot/internal/conn"
+	"github.com/pgrundev/pgbot/internal/pglog"
 	"github.com/spf13/cobra"
 )
 
@@ -20,7 +21,7 @@ import (
 // --verify instead checks an existing role against the prerequisites.
 func newInitCmd() *cobra.Command {
 	var role, database string
-	var verify bool
+	var verify, withLogs bool
 	var timeout time.Duration
 	cmd := &cobra.Command{
 		Use:   "init [connection-string]",
@@ -72,13 +73,14 @@ func newInitCmd() *cobra.Command {
 			if db == "" {
 				db = "yourdb"
 			}
-			fmt.Fprint(cmd.OutOrStdout(), initSQL(role, db, provider))
+			fmt.Fprint(cmd.OutOrStdout(), initSQL(role, db, provider, withLogs))
 			return nil
 		},
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&role, "role", "pgbot_ro", "name of the monitoring role to create")
 	fl.StringVar(&database, "database", "", "database to grant CONNECT on (default: detected, else a placeholder)")
+	fl.BoolVar(&withLogs, "logs", false, "include the pg_read_binary_file grant `pgbot logs` needs (active, not commented)")
 	fl.BoolVar(&verify, "verify", false, "connect as the monitoring role and check the prerequisites instead")
 	fl.DurationVar(&timeout, "timeout", 30*time.Second, "connection budget for detection/verification")
 	return cmd
@@ -88,11 +90,13 @@ func newInitCmd() *cobra.Command {
 // README documents), followed by the provider-appropriate pg_stat_statements
 // step. Contract, pinned by tests: every line is a statement, a -- comment, or
 // blank, so `pgbot init | psql` can never run anything unreviewed prose-shaped.
-func initSQL(role, database string, p conn.Provider) string {
+func initSQL(role, database string, p conn.Provider, withLogs bool) string {
 	var b strings.Builder
 	b.WriteString("-- pgbot init — read-only monitoring role (generated, NOT executed)\n")
 	b.WriteString("-- Review, replace the password placeholder, then run as an admin:\n")
 	b.WriteString("--   pgbot init | psql \"$ADMIN_DSN\"\n")
+	b.WriteString("-- Re-running is safe: an existing role makes CREATE ROLE error (its\n")
+	b.WriteString("-- password is left as it was) and every GRANT below still applies.\n")
 	b.WriteString("\n")
 	fmt.Fprintf(&b, "CREATE ROLE %s LOGIN PASSWORD 'REPLACE-WITH-A-STRONG-PASSWORD';\n", role)
 	fmt.Fprintf(&b, "GRANT pg_monitor TO %s;\n", role)
@@ -108,6 +112,19 @@ func initSQL(role, database string, p conn.Provider) string {
 		// Needs shared_preload_libraries first — a bare CREATE EXTENSION here
 		// would just error in the pipe, so the steps stay as comments.
 		fmt.Fprintf(&b, "-- To enable it: %s\n", p.PgssInstructions())
+	}
+	b.WriteString("\n")
+
+	// The logs grant is the one privilege `pgbot logs` needs beyond pg_monitor
+	// (reading server-log content). Beyond least-privilege, so it ships
+	// commented unless --logs makes opting in explicit.
+	if withLogs {
+		b.WriteString("-- pgbot logs reads the server logfile; that needs this one extra grant:\n")
+		b.WriteString(pglog.ReadGrantSQL(role) + "\n")
+	} else {
+		b.WriteString("-- Optional — only for `pgbot logs` (reads server-log content; one\n")
+		b.WriteString("-- privilege beyond pg_monitor). Uncomment, or re-run with --logs:\n")
+		b.WriteString("-- " + pglog.ReadGrantSQL(role) + "\n")
 	}
 	b.WriteString("\n")
 

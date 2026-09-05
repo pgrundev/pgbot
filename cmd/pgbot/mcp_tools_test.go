@@ -122,7 +122,7 @@ func TestWhyTool(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &r); err != nil {
 		t.Fatalf("not valid JSON: %v\n%s", err, out)
 	}
-	if r.SchemaVersion != "1.0.0" || len(r.Chains) == 0 {
+	if r.SchemaVersion != "1.1.0" || len(r.Chains) == 0 {
 		t.Fatalf("expected a versioned report with the orders chain, got %s", out)
 	}
 	if r.Note == "" {

@@ -7,7 +7,136 @@ separately by `model.SchemaVersion` (currently 1.2.0).
 
 ## [Unreleased]
 
+### Fixed
+- **`pgbot tune --timeout`** (#26, #30, contributed by @YIKUAIBANZI). `tune` ran
+  under a fixed 30s budget with no flag to raise it, so a slow or remote database
+  died with `collect: context deadline exceeded`; it now takes the same
+  `--timeout` (default 30s) as the other collection commands. The shared
+  `gather` path also forwards that budget to the collector, which previously
+  kept its own 20s+interval cap regardless — so `--timeout` above ~21s on
+  `indexes`, `queries`, `tables`, and `vacuum` now actually extends the run.
+
+## [0.7.2] - 2026-09-01
+
 ### Added
+- **`pgbot logs` reads the pgAudit trail as its own level.** pgAudit writes
+  its audit records into the server log at LOG severity with an `AUDIT:`
+  prefix; they now classify as level `audit` — `pgbot logs --level audit`
+  is the audit-trail reader, completing the pgaudit story next to the
+  existing posture findings. Scrubbed in `--json` like everything else.
+- **`pgbot report` — the full inspection as one self-contained HTML page.**
+  The same collection pipeline as `inspect` (a baseline snapshot is stored as
+  usual), rendered for a browser: health score, findings ordered by severity
+  with evidence, remediation, and caveats inline, top queries with shares,
+  largest tables, unused/redundant indexes and unindexed FKs, the wait
+  profile, and non-default settings — with click-to-sort columns. The Context
+  is PII-free by construction and the page makes zero external requests
+  (pinned by test), so the report is safe to attach to a ticket.
+- **`pgbot activity` — pg_stat_activity for humans.** The live client
+  backends: PID, user@db, app, state (colored), current wait, transaction and
+  query ages, and the scrubbed SQL. Plain idle sessions are summarized rather
+  than listed (`--all` lists them); pgbot's own connections are excluded by
+  PID; `--json` emits one scrubbed object per session.
+- **`pgbot erd --layout row`** — left-to-right diagram: parents in the left
+  column, children to the right, edges drawn as dashed ascii (`----`, `|`,
+  `+`, `<` into the parent) leaving from each FK's own row.
+- **`pgbot erd --html`** — a self-contained interactive diagram file: inline
+  SVG (dashed edges, arrowheads, pgbot's terminal palette) with inline
+  pan/zoom script, zero external requests — the schema never leaves the file.
+- **`pgbot erd` shows indexes and database info.** Every renderer opens with
+  the database header (name, server version, table/FK/index counts, size),
+  and each table box gains an index section below a divider — non-primary
+  indexes with method, columns, partial-index predicates, and UNIQUE marked.
+
+## [0.7.1] - 2026-09-01
+
+### Added
+- **`pgbot erd` — the schema as an ER diagram, in the terminal.** Box-drawn
+  tables with PK/FK markers and a crow's-foot relationship forest (multi-parent
+  tables cross-linked, cycles handled), introspected from `pg_catalog` —
+  structure only, never data, nothing beyond CONNECT required, and the
+  connection string never leaves the machine. Every foreign key is
+  ROUTED as a drawn edge — corner at the FK row, a vertical lane in the left
+  gutter, crossings as ┼, an arrowhead into the parent — with lane reuse and a
+  cap so huge schemas degrade to the textual markers. `--mermaid` emits an
+  erDiagram pasteable into GitHub or mermaid.live; `--schema` narrows the scope.
+
+## [0.7.0] - 2026-09-01
+
+### Added
+- **`pgbot why --duration 10s` — live wait diagnosis on top of the offline
+  history engine.** `why` without the flag is unchanged (offline, no
+  connection). With it, the waits study becomes a live evidence source
+  classified through a deterministic first-match cause table — lock contention
+  (only with a sustained named blocker), lock churn (a possibility, never a
+  diagnosis), storage/WAL wait (IO alone never claims a missing index),
+  client/application wait (explicitly not a PostgreSQL problem), CPU
+  saturation, mixed — behind two gates that outrank every diagnosis:
+  insufficient evidence (thin sample, partial visibility, poor coverage) and
+  not-significant (waits on near-zero activity are noise). Wait-rollup history
+  corroborates by labeled ratio ("Lock waits 8× vs the previous 24h"), never
+  blended into live percentages, and adds confidence. The report gains an
+  additive `live` object (`why_schema_version` 1.0.0 → 1.1.0); wait counts
+  fold into the store so each run sharpens the next.
+
+- **`pgbot waits` — sampled wait analysis with evidence-gated blockers
+  (experimental).** Samples `pg_stat_activity` at up to 20 Hz and the lock
+  graph at 1 Hz for a bounded window (default 10s, `--duration`, `--pid`,
+  `--group event|query|session`, `--json`): average active sessions, DB time
+  by wait class, top wait events, waiting sessions, and blockers — a holder is
+  named only when observed across ≥3 lock snapshots (or 2 with the victim's
+  own samples majority-Lock); anything less is transient, never blamed. All
+  shares are labeled sampled; the only exact numbers are ages read from the
+  server; lock contention is explicitly reported as NOT evidence of a missing
+  index. Query text passes the literal scrubber; `--json` is a separately
+  versioned document (`waits_schema_version 1.0.0`). Wait counts fold into the
+  existing `wait_rollups` store by default (`--no-store` opts out). Reuses the
+  hardened inspect ASH sampler — poll budgets, skip-while-in-flight,
+  idle-vs-broken accounting — with an extended column set.
+
+## [0.6.3] - 2026-08-31
+
+### Added
+- **`pgbot init` now covers the `pgbot logs` grant** — commented out by
+  default (it is one privilege beyond pg_monitor, so opting in stays a
+  visible act), emitted active with `pgbot init --logs`. The statement text
+  is shared with the runtime's missing-grant hint, so the two can never
+  drift apart.
+
+## [0.6.2] - 2026-08-31
+
+### Fixed
+- **`install.sh` warns when an older pgbot earlier in PATH shadows the fresh
+  install** (a brew or `go install` copy): the installer printed the new
+  version while the shell kept running the old binary, so a just-shipped
+  command looked "missing" minutes after release. The warning names the
+  shadowing binary, its version, and the fix. (The script is served from
+  `main`, so this was live before the tag; the release anchors it.)
+
+## [0.6.1] - 2026-08-31
+
+### Added
+- **`pgbot logs --follow` / `-f`** — a true alias for `--live`, bound to the
+  same variable, because `tail -f` muscle memory deserves to work.
+
+## [0.6.0] - 2026-08-31
+
+### Added
+- **`pgbot logs` — the server log over SQL, typed and self-aware
+  (experimental).** `pgbot logs` prints the newest 100 entries (`--last N` to
+  change, `--live` to keep following), read through
+  `pg_current_logfile()` + `pg_read_binary_file()` — no agent, no sidecar, no
+  file access. Entries are parsed from whichever format the server writes
+  (jsonlog preferred, then csvlog, then stderr with any `log_line_prefix`) and
+  typed `query` / `info` / `warn` / `error` (`--level` filters). Rotation is
+  followed; `--json` emits one scrubbed object per entry (the machine
+  contract — literals never leave the log). pgbot filters its own footprint
+  out of the stream — its probe, its polling reads, its connection lines —
+  because a log tail that reads its own reads is a feedback loop, and
+  `--last 100` means 100 entries you actually wanted. Needs one grant beyond
+  `pg_monitor` (printed exactly when missing); without a log collector
+  (`logging_collector=off`, the Docker default) it says so and points at
+  `docker logs`.
 - **PgDog poolers are identified behaviorally, never by hostname** (#22). The
   connect probe now sets the `pgdog.shard` routing hint session-level alongside
   a control GUC and reads both back: PgDog consumes `pgdog.*` hints instead of
@@ -444,6 +573,13 @@ separately by `model.SchemaVersion` (currently 1.2.0).
   1.25.13, and golang.org/x/text to v0.39.0; `govulncheck` now runs in CI and
   reports no vulnerabilities.
 
+[0.7.2]: https://github.com/pgrundev/pgbot/releases/tag/v0.7.2
+[0.7.1]: https://github.com/pgrundev/pgbot/releases/tag/v0.7.1
+[0.7.0]: https://github.com/pgrundev/pgbot/releases/tag/v0.7.0
+[0.6.3]: https://github.com/pgrundev/pgbot/releases/tag/v0.6.3
+[0.6.2]: https://github.com/pgrundev/pgbot/releases/tag/v0.6.2
+[0.6.1]: https://github.com/pgrundev/pgbot/releases/tag/v0.6.1
+[0.6.0]: https://github.com/pgrundev/pgbot/releases/tag/v0.6.0
 [0.5.1]: https://github.com/pgrundev/pgbot/releases/tag/v0.5.1
 [0.5.0]: https://github.com/pgrundev/pgbot/releases/tag/v0.5.0
 [0.4.3]: https://github.com/pgrundev/pgbot/releases/tag/v0.4.3

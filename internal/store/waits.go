@@ -91,3 +91,40 @@ func pruneWaits(tx *sql.Tx, fingerprint string, now time.Time) error {
 	}
 	return nil
 }
+
+// ReadWaitShares returns each wait class's share of all samples recorded for
+// the fingerprint between from and to, plus the total sample count — the
+// baseline the why-engine compares a live study against. Windows from the
+// store are minute/hour rollups of whenever pgbot actually ran; callers
+// compare by ratio and must never blend them into live percentages.
+func ReadWaitShares(s *Store, fingerprint string, from, to time.Time) (map[string]float64, int, error) {
+	rows, err := s.db.Query(`
+		SELECT wait_type, sum(samples) FROM wait_rollups
+		WHERE target_id = ? AND bucket_ts >= ? AND bucket_ts < ?
+		GROUP BY wait_type`, fingerprint, from.UTC().Unix(), to.UTC().Unix())
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	counts := map[string]int64{}
+	var total int64
+	for rows.Next() {
+		var typ string
+		var n int64
+		if err := rows.Scan(&typ, &n); err != nil {
+			return nil, 0, err
+		}
+		counts[typ] = n
+		total += n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	shares := map[string]float64{}
+	if total > 0 {
+		for typ, n := range counts {
+			shares[typ] = float64(n) / float64(total)
+		}
+	}
+	return shares, int(total), nil
+}

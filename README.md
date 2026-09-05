@@ -223,8 +223,13 @@ or `$PGBOT_DATABASE_URL`.
 | `lint` | schema-only check, safe on an empty CI database (`inspect --profile=schema --no-store`) |
 | `init` | generate the read-only role setup SQL — nothing is executed (`--verify` checks an existing role) |
 | `diff` | compare two baseline snapshots offline |
-| `why` | explain a regression from baseline history: symptom ← mechanism ← antecedent, with numbers and onset times (offline) |
+| `why` | explain a regression from baseline history: symptom ← mechanism ← antecedent, with numbers and onset times (offline; `--duration 10s` adds a live wait diagnosis) |
 | `indexes` · `queries` · `tables` · `vacuum` | drill into one signal |
+| `logs` | the server log over SQL — newest entries or `--live` follow (experimental) |
+| `waits` | sample where database time goes — wait classes, blockers, contention (experimental) |
+| `erd` | the schema as an ER diagram, drawn in the terminal (`--mermaid` for GitHub) |
+| `activity` | live sessions right now — PIDs, ages, waits, and what each is running |
+| `report` | the full inspection as one self-contained HTML page (`pgbot report > report.html`) |
 | `advise` | planner-validated missing-index suggestions (needs hypopg) |
 | `ask "…"` · `explain` | a plain-language AI reading of the same deterministic findings |
 | `explain-finding <id>` | the catalogue page for a finding, offline |
@@ -253,6 +258,7 @@ findings never move them.
 | npx (no install) | `npx @pgbot/cli inspect "$DATABASE_URL"` |
 | Script (cosign signature + checksum) | `curl -fsSL https://pgbot.dev/install \| sh` |
 | Homebrew | `brew install pgrundev/tap/pgbot` |
+| Arch User Repository | `yay -S pgbot-bin` |
 | Go | `go install github.com/pgrundev/pgbot/cmd/pgbot@latest` |
 | Docker | `docker run --rm ghcr.io/pgrundev/pgbot inspect "$DATABASE_URL"` |
 | Windows / manual | download the archive for your OS/arch from [Releases](https://github.com/pgrundev/pgbot/releases) (Linux/macOS `.tar.gz`, Windows `.zip`) |
@@ -575,6 +581,8 @@ on stdio, so an AI agent can call pgbot as a read-only tool. It exposes
 - `explain_plan` — the planner's plan for a SELECT (plain EXPLAIN, never executed)
 - `schema_of` — a table's columns/indexes/constraints + row estimate, **no data**
 - `compare_to_baseline` — the `diff`, with its interval-honesty and reset caveats
+- `why` — the causal chains from stored history (symptom ← mechanism ←
+  antecedent), computed offline from the local store
 - `explain_finding` — pgbot's catalogue page for a finding, so the agent explains
   a recommendation in pgbot's words instead of inventing them
 
@@ -583,7 +591,13 @@ label, honors `.pgbot.toml` suppression, and never exposes a raw connection
 string or query literals to the model. The agent reasons over the same findings
 the CLI computes.
 
-Add it to any MCP client (Claude Desktop/Code, Cursor, …):
+In Claude Code it's one line:
+
+```sh
+claude mcp add pgbot --env DATABASE_URL="postgres://pgbot_ro:…@host:5432/db?sslmode=require" -- pgbot mcp
+```
+
+Or add it to any MCP client's config (Claude Desktop, Cursor, …):
 
 ```json
 {
@@ -810,6 +824,90 @@ a silent substitution), warns up front when a **stats reset** or
 **pg_stat_statements eviction** between the snapshots makes specific deltas
 untrustworthy, and refuses to compare two different databases (pass
 `--fingerprint` when the store holds more than one).
+
+### `why --duration` — live diagnosis: executing, or waiting?
+
+```sh
+pgbot why --duration 10s          # sample the live database, then diagnose
+```
+
+`why` stays fully offline by default. With `--duration` it also runs a wait
+study (the same engine as `pgbot waits`) and classifies the result through a
+deterministic, first-match cause table: **transaction lock contention** (only
+with a sustained, named blocker), **storage/WAL wait** (IO alone never claims
+a missing index), **client/application wait** (explicitly not a PostgreSQL
+problem), **saturated with active work**, **not significant** (waits on
+near-zero activity are noise), or **insufficient evidence** — refusing to
+conclude beats a confident guess. When the local store holds wait history, a
+labeled ratio corroborates: *"Lock waits 8× vs the previous 24h."* Shares are
+sampled; the only exact numbers are ages read from the server.
+
+### `erd` — the schema, as a diagram, in your terminal
+
+```sh
+pgbot erd                # box-drawn tables + a crow's-foot relationship forest
+pgbot erd --schema app   # one schema only
+pgbot erd --layout row   # left-to-right, dashed ascii edges
+pgbot erd --mermaid      # erDiagram text — pasteable into GitHub or mermaid.live
+pgbot erd --html > schema.html   # self-contained interactive SVG: pan, zoom, share
+```
+
+Structure only — tables, columns, keys, foreign-key edges from `pg_catalog` —
+never data, and the connection string never leaves your machine (unlike
+paste-your-DSN diagram websites). Needs nothing beyond CONNECT. The `--html`
+file is fully self-contained — inline SVG and inline script, zero external
+requests — so the schema never leaves the file either.
+
+### `waits` — where database time goes (experimental)
+
+```sh
+pgbot waits                         # sample 10s: wait classes, top events, blockers
+pgbot waits --duration 30s --group query
+pgbot waits --pid 18442             # one backend's story
+pgbot waits --json                  # versioned pgbot-waits document (scrubbed)
+```
+
+Samples `pg_stat_activity` at 10 Hz and the lock graph (`pg_blocking_pids`)
+at 1 Hz for a bounded window — no extension, no eBPF, no daemon, plain
+`pg_monitor`. Reports average active sessions, DB time by wait class, top wait
+events, waiting sessions, and **blockers with evidence**: a holder is named
+only when seen across several lock snapshots (one glimpse is listed as
+transient, never blamed). Every share is labeled *sampled* — the only exact
+numbers are ages read from the server — and lock contention is explicitly
+called out as *not* evidence of a missing index. Aggregated wait counts fold
+into the local baseline store (`--no-store` skips), so `diff` and `why` gain
+wait history over time.
+
+### `logs` — the server log, over SQL (experimental)
+
+```sh
+pgbot logs               # the newest 100 entries, typed: query / info / warn / error
+pgbot logs --last 20     # fewer (or more)
+pgbot logs --live        # keep following — Ctrl+C to stop (--follow / -f works too)
+pgbot logs --level warn,error --json   # scrubbed NDJSON for scripts and agents
+```
+
+No agent and no file access: pgbot reads the server's own logfile through
+`pg_current_logfile()` and `pg_read_binary_file()`, whichever format it writes
+(jsonlog, csvlog, or stderr with any `log_line_prefix`), and follows rotation.
+pgbot's own footprint — its probe, its polling reads — is filtered out of the
+stream, so a live tail never reads its own reads, and `--last 100` means 100
+entries of *your* activity. The human output shows log lines verbatim; `--json`
+passes every message through the same literal scrubber as the rest of pgbot.
+
+Reading log content is the one thing `pg_monitor` cannot do, so this command
+needs a single extra grant, printed exactly when it's missing:
+
+```sql
+GRANT EXECUTE ON FUNCTION pg_read_binary_file(text, bigint, bigint, boolean) TO pgbot_ro;
+```
+
+(`pgbot init` includes it commented out; `pgbot init --logs` emits it active.)
+
+A server without a log collector (`logging_collector=off` — the Docker image
+default) has no file to read; pgbot says so and points you at `docker logs`.
+Managed providers that keep logs behind their own APIs (Neon, Supabase) are out
+of reach over SQL — that's their boundary, not a pgbot flag away.
 
 > **Whole cluster:** `pgbot inspect "$DATABASE_URL" --all-databases` inspects every
 > connectable database on the server. Cluster-wide findings (settings, replication,

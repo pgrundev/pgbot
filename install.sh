@@ -152,3 +152,17 @@ fi
 
 say "installed pgbot $version to $INSTALL_DIR/pgbot"
 "$INSTALL_DIR/pgbot" --version || true
+
+# An older pgbot earlier in PATH (brew, go install) silently shadows this
+# install: `pgbot --version` above shows the new binary, but the user's shell
+# runs the old one. Detect it and say so, or the first symptom is a fresh
+# feature "missing" from a just-installed version.
+resolved="$(command -v pgbot 2>/dev/null || true)"
+if [ -n "$resolved" ] && [ "$resolved" != "$INSTALL_DIR/pgbot" ]; then
+  say ""
+  say "WARNING: your shell resolves 'pgbot' to $resolved"
+  say "         ($("$resolved" --version 2>/dev/null || echo version unreadable)), which is earlier in PATH"
+  say "         than this install. Upgrade or remove it so one binary wins:"
+  say "           brew upgrade pgbot        # if it came from Homebrew"
+  say "           rm \"$resolved\"            # otherwise"
+fi

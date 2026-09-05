@@ -109,11 +109,11 @@ func TestProfileFrom_failureVsIdle(t *testing.T) {
 }
 
 func TestAshSQL_versionGate(t *testing.T) {
-	pg13 := ashSQL(conn.Capabilities{VersionNum: 130000})
+	pg13 := ashSQL(conn.Capabilities{VersionNum: 130000}, false)
 	if !strings.Contains(pg13, "NULL::bigint") {
 		t.Error("PG13 SQL must select a NULL literal, not the query_id column")
 	}
-	pg14 := ashSQL(conn.Capabilities{VersionNum: 140000})
+	pg14 := ashSQL(conn.Capabilities{VersionNum: 140000}, false)
 	if strings.Contains(pg14, "NULL::bigint") {
 		t.Error("PG14+ SQL must select the real query_id column")
 	}

@@ -186,6 +186,10 @@ func suppReason(f model.Finding) string {
 	return "no reason given"
 }
 
+// HealthScore exposes the dashboard's 0–100 grade to sibling renderers (the
+// HTML report), so every surface shows the same number.
+func HealthScore(c *model.Context) int { return computeHealthScore(c) }
+
 func computeHealthScore(c *model.Context) int {
 	penalty := 0
 	for _, f := range c.Findings {

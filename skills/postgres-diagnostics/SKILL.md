@@ -21,7 +21,9 @@ diagnoses or act on the database.
 ## How to run it
 
 **If the pgbot MCP server is connected**, call its tools: `inspect` (start here),
-`top_queries`, `vacuum_health`, `unused_indexes`. They return stable JSON.
+`top_queries`, `vacuum_health`, `unused_indexes`, `why`. They return stable JSON.
+(The `logs`, `waits`, `activity`, `erd`, and `report` commands are CLI-only for
+now — run them through the shell.)
 
 **Otherwise run the CLI.** It needs a connection string for a read-capable role
 (ideally one with `pg_monitor`). Pick the command that matches the question:
@@ -35,6 +37,13 @@ diagnoses or act on the database.
 | "Is autovacuum keeping up?" | `pgbot vacuum "$DSN"` |
 | "Which indexes can I drop?" | `pgbot indexes "$DSN"` |
 | "Should I re-tune config?" | `pgbot tune "$DSN"` |
+| "Why is it slow RIGHT NOW?" | `pgbot why --duration 10s "$DSN"` (live wait sampling → evidence-gated cause: lock contention vs IO vs CPU vs client; refuses to guess on thin evidence) |
+| "Who is connected / what's running?" | `pgbot activity "$DSN"` (live sessions: PIDs, states, waits, ages, scrubbed SQL) |
+| "Where does database time go?" | `pgbot waits --duration 10s "$DSN"` (sampled wait classes + blockers named only with sustained evidence) |
+| "What changed since yesterday?" | `pgbot why "$DSN"` / `pgbot diff --since 24h` (offline, from stored snapshots) |
+| "What's in the server log?" | `pgbot logs "$DSN"` (`--live` to follow, `--level error` or `--level audit` to filter; needs one extra grant, printed when missing) |
+| "What does the schema look like?" | `pgbot erd "$DSN"` (`--mermaid` for a renderable diagram, `--html > schema.html` for an interactive file) |
+| Full report for a human to read | `pgbot report "$DSN" > report.html` (self-contained page: findings, queries, indexes, waits) |
 | Machine-readable for parsing | `pgbot inspect "$DSN" --json` |
 
 Add `--timeout 60s` for large or remote databases.

@@ -27,6 +27,14 @@ pushd "$tmp" >/dev/null
 echo "→ gating HEAD ($head) in an isolated clone"
 CGO_ENABLED=0 go build ./...
 CGO_ENABLED=0 go vet ./...
+# CI runs golangci-lint; a gate that skips it reports green on pushes CI will
+# reject (ST1003 field naming has done exactly that, twice). Hard-require the
+# tool rather than soft-skip — a missing linter is a broken dev setup.
+command -v golangci-lint >/dev/null || {
+  echo "✗ golangci-lint not installed (brew install golangci-lint) — CI runs it, so the gate must too" >&2
+  exit 1
+}
+golangci-lint run ./...
 CGO_ENABLED=0 go test ./...
 for goos in linux darwin; do
   for goarch in amd64 arm64; do

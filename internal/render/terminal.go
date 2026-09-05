@@ -52,6 +52,7 @@ func (x Styler) Dim(t string) string  { return x.s.dim(t) }
 func (x Styler) Head(t string) string { return x.s.head(t) }
 func (x Styler) Good(t string) string { return x.s.good(t) }
 func (x Styler) Warn(t string) string { return x.s.warn(t) }
+func (x Styler) Crit(t string) string { return x.s.crit(t) }
 func (x Styler) AI(t string) string   { return x.s.c("212", true, t) } // magenta — distinctly "not the deterministic report"
 
 // HumanBytes formats a byte count as KiB/MiB/GiB for sibling packages.

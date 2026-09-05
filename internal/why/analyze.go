@@ -55,9 +55,12 @@ type Report struct {
 	RegressionsFound int      `json:"regressions_found"`
 	Chains           []Chain  `json:"chains"`
 	Notes            []string `json:"notes,omitempty"`
+	// Live is the wait-study diagnosis when `why --duration` sampled the
+	// database — additive (1.1.0); offline reports omit it.
+	Live *LiveReport `json:"live,omitempty"`
 }
 
-const whySchemaVersion = "1.0.0"
+const whySchemaVersion = "1.1.0"
 
 // minSamples is the least history an onset can stand on.
 const minSamples = 3

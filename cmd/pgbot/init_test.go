@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/pgrundev/pgbot/internal/conn"
+	"github.com/pgrundev/pgbot/internal/pglog"
 )
 
 // `pgbot init` GENERATES setup SQL; it never executes it. The output contract:
@@ -13,7 +14,7 @@ import (
 // pg_monitor, CONNECT grant.
 
 func TestInitSQLDefaults(t *testing.T) {
-	sql := initSQL("pgbot_ro", "yourdb", conn.ProviderUnknown)
+	sql := initSQL("pgbot_ro", "yourdb", conn.ProviderUnknown, false)
 
 	for _, want := range []string{
 		"CREATE ROLE pgbot_ro LOGIN PASSWORD",
@@ -39,7 +40,7 @@ func TestInitSQLDefaults(t *testing.T) {
 }
 
 func TestInitSQLCustomRoleAndDatabase(t *testing.T) {
-	sql := initSQL("metrics_ro", "orders_prod", conn.ProviderUnknown)
+	sql := initSQL("metrics_ro", "orders_prod", conn.ProviderUnknown, false)
 	if !strings.Contains(sql, "GRANT pg_monitor TO metrics_ro;") {
 		t.Errorf("custom role not honored\n---\n%s", sql)
 	}
@@ -51,7 +52,7 @@ func TestInitSQLCustomRoleAndDatabase(t *testing.T) {
 func TestInitSQLProviderPgss(t *testing.T) {
 	// Supabase/Neon preload pg_stat_statements, so CREATE EXTENSION is safe to
 	// run as-is: it must appear as an executable statement, not a comment.
-	sql := initSQL("pgbot_ro", "yourdb", conn.ProviderSupabase)
+	sql := initSQL("pgbot_ro", "yourdb", conn.ProviderSupabase, false)
 	if !hasExecutableLine(sql, "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;") {
 		t.Errorf("supabase: CREATE EXTENSION should be executable\n---\n%s", sql)
 	}
@@ -59,7 +60,7 @@ func TestInitSQLProviderPgss(t *testing.T) {
 	// On RDS the extension needs shared_preload_libraries first — emitting a
 	// bare CREATE EXTENSION would just error in the pipe. Instructions must be
 	// present but commented.
-	sql = initSQL("pgbot_ro", "yourdb", conn.ProviderRDS)
+	sql = initSQL("pgbot_ro", "yourdb", conn.ProviderRDS, false)
 	if hasExecutableLine(sql, "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;") {
 		t.Errorf("rds: CREATE EXTENSION must not be executable before preload\n---\n%s", sql)
 	}
@@ -72,7 +73,7 @@ func TestInitSQLProviderPgss(t *testing.T) {
 // must be safe. Every line is blank, a comment, or one of the known statements.
 func TestInitSQLPipeSafe(t *testing.T) {
 	for _, p := range []conn.Provider{conn.ProviderUnknown, conn.ProviderSupabase, conn.ProviderRDS, conn.ProviderNeon, conn.ProviderAzure} {
-		sql := initSQL("pgbot_ro", "yourdb", p)
+		sql := initSQL("pgbot_ro", "yourdb", p, false)
 		for _, line := range strings.Split(sql, "\n") {
 			trimmed := strings.TrimSpace(line)
 			if trimmed == "" || strings.HasPrefix(trimmed, "--") {
@@ -165,5 +166,41 @@ func TestInitVerifyReportStandby(t *testing.T) {
 	joined := strings.Join(lines, "\n")
 	if !strings.Contains(joined, "standby") {
 		t.Errorf("verify report should note the standby (per-node counters caveat):\n%s", joined)
+	}
+}
+
+// The logs grant appears in every init output — commented by default (it is
+// one privilege beyond pg_monitor, so opting in must be a visible act), and
+// active under --logs. Text comes from pglog.ReadGrantSQL, so init and the
+// runtime error hint can never drift apart.
+func TestInitSQLLogsGrant(t *testing.T) {
+	grant := pglog.ReadGrantSQL("pgbot_ro")
+
+	def := initSQL("pgbot_ro", "yourdb", conn.ProviderUnknown, false)
+	if !strings.Contains(def, "-- "+grant) {
+		t.Errorf("default init must carry the logs grant commented out:\n%s", def)
+	}
+	if strings.Contains(strings.ReplaceAll(def, "-- "+grant, ""), grant) {
+		t.Errorf("default init must not carry the grant active:\n%s", def)
+	}
+
+	withLogs := initSQL("pgbot_ro", "yourdb", conn.ProviderUnknown, true)
+	found := false
+	for _, line := range strings.Split(withLogs, "\n") {
+		if line == grant {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("--logs init must carry the grant as an active statement:\n%s", withLogs)
+	}
+}
+
+// A re-run against an existing role prints ERROR from CREATE ROLE while every
+// grant still applies — the header must say so, or the ERROR reads as failure.
+func TestInitSQLExplainsRerunSafety(t *testing.T) {
+	sql := initSQL("pgbot_ro", "yourdb", conn.ProviderUnknown, false)
+	if !strings.Contains(sql, "Re-running is safe") {
+		t.Errorf("header must explain re-run behavior:\n%s", sql)
 	}
 }

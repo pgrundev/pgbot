@@ -21,17 +21,37 @@ type WaitSample struct {
 	QueryID       *int64  `db:"query_id"` // pg_stat_activity.query_id, PG14+
 	BackendType   string  `db:"backend_type"`
 	AppName       string  `db:"app_name"`
+
+	// Extended columns, selected only by the waits study (RowToStructByNameLax
+	// leaves them zero under inspect's lean sampler). QueryText is RAW SQL and
+	// must be scrubbed before entering any report.
+	Usename   string  `db:"usename"`
+	Datname   string  `db:"datname"`
+	QueryAgeS float64 `db:"query_age_s"`
+	XactAgeS  float64 `db:"xact_age_s"`
+	QueryText string  `db:"query_text"`
 }
 
 // ashSQL selects the currently-active non-self backends. query_id is PG14+; on
 // older servers we select a NULL literal so the column reference never errors.
-func ashSQL(caps conn.Capabilities) string {
+// extended adds identity, ages, and query text — the waits study's columns;
+// inspect's sampler stays lean.
+func ashSQL(caps conn.Capabilities, extended bool) string {
 	qid := "NULL::bigint"
 	if caps.VersionNum >= 140000 {
 		qid = "query_id"
 	}
-	return `SELECT pid, state, wait_event_type, wait_event, ` + qid + ` AS query_id,
-	               backend_type, coalesce(application_name, '') AS app_name
+	cols := `pid, state, wait_event_type, wait_event, ` + qid + ` AS query_id,
+	               backend_type, coalesce(application_name, '') AS app_name`
+	if extended {
+		cols += `,
+	               coalesce(usename::text, '') AS usename,
+	               coalesce(datname::text, '') AS datname,
+	               coalesce(extract(epoch FROM now() - query_start), 0) AS query_age_s,
+	               coalesce(extract(epoch FROM now() - xact_start), 0) AS xact_age_s,
+	               left(coalesce(query, ''), 300) AS query_text`
+	}
+	return `SELECT ` + cols + `
 	        FROM pg_stat_activity
 	        WHERE state = 'active' AND pid <> pg_backend_pid()`
 }
@@ -64,10 +84,15 @@ const ashPollBudget = time.Second
 // dropped and sampling continues — the sampler must never fail the run or queue
 // behind a lock storm. A tick that fires while a poll is in flight is skipped.
 func sampleWaits(ctx context.Context, t *conn.Target, caps conn.Capabilities, hz int, window time.Duration) ashResult {
+	return sampleWaitsOpt(ctx, t, caps, hz, window, false)
+}
+
+// sampleWaitsOpt is sampleWaits with the extended column set for the waits study.
+func sampleWaitsOpt(ctx context.Context, t *conn.Target, caps conn.Capabilities, hz int, window time.Duration, extended bool) ashResult {
 	if hz <= 0 || window <= 0 {
 		return ashResult{}
 	}
-	sql := t.ExcludeSelf(ashSQL(caps))
+	sql := t.ExcludeSelf(ashSQL(caps, extended))
 	interval := time.Second / time.Duration(hz)
 	start := time.Now()
 	deadline := start.Add(window)

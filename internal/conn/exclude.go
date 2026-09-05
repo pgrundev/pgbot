@@ -48,6 +48,11 @@ func (s *selfPIDs) list() []uint32 {
 // querying backend. ExcludeSelf rewrites it in place.
 const selfFilter = "pid <> pg_backend_pid()"
 
+// SelfPIDs returns the backend PIDs of every connection pgbot has opened to
+// this server (probe included), so `pgbot logs` can drop its own log lines
+// the way collectors drop their own sessions.
+func (t *Target) SelfPIDs() []uint32 { return t.self.list() }
+
 // ExcludeSelf rewrites a pg_stat_activity query so it ignores EVERY one of
 // pgbot's own pool connections — not just the backend running the query.
 //

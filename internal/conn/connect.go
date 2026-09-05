@@ -77,7 +77,7 @@ func ConnectDB(ctx context.Context, connString, database string) (*Target, error
 	// Probe capabilities + pooler on a throwaway connection first, so AfterConnect
 	// applies only the GUCs this server understands and the pool uses the right
 	// wire protocol.
-	caps, pooler, err := probe(ctx, cfg.ConnConfig.Copy())
+	caps, pooler, probePID, err := probe(ctx, cfg.ConnConfig.Copy())
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +87,10 @@ func ConnectDB(ctx context.Context, connString, database string) (*Target, error
 
 	// Track our own backend PIDs so collectors can exclude every pgbot connection
 	// from pg_stat_activity, not just the one running a given query (ExcludeSelf).
+	// The probe backend is gone by now but its PID still matters: `pgbot logs`
+	// filters historical log lines by PID, and the probe wrote some.
 	self := newSelfPIDs()
+	self.add(probePID)
 	cfg.AfterConnect = func(ctx context.Context, c *pgx.Conn) error {
 		if err := applySessionSetup(ctx, c, caps); err != nil {
 			return err
@@ -192,12 +195,13 @@ func applySessionSetup(ctx context.Context, c *pgx.Conn, caps Capabilities) erro
 // probe reads server_version_num, installed extensions, role membership, and
 // the system identifier in one round trip (with a best-effort fallback for the
 // identifier, which needs elevated read access on some managed providers).
-func probe(ctx context.Context, cc *pgx.ConnConfig) (Capabilities, PoolerInfo, error) {
+func probe(ctx context.Context, cc *pgx.ConnConfig) (Capabilities, PoolerInfo, uint32, error) {
 	c, err := pgx.ConnectConfig(ctx, cc)
 	if err != nil {
-		return Capabilities{}, PoolerInfo{}, fmt.Errorf("connect: %w", err)
+		return Capabilities{}, PoolerInfo{}, 0, fmt.Errorf("connect: %w", err)
 	}
 	defer c.Close(ctx)
+	probePID := c.PgConn().PID()
 
 	// Detect the pooler first — if prepared statements are broken, every later
 	// query on this probe connection must use the simple protocol too.
@@ -230,7 +234,7 @@ func probe(ctx context.Context, cc *pgx.ConnConfig) (Capabilities, PoolerInfo, e
 		&caps.StartedAt, &caps.HasStatStatements, &caps.HasHypopg, &caps.HasPgMonitor,
 		&mk.HasRDS, &mk.HasCloudSQL, &mk.HasAzure, &caps.InRecovery, &mk.IsAurora)
 	if err != nil {
-		return Capabilities{}, pooler, fmt.Errorf("probe capabilities: %w", err)
+		return Capabilities{}, pooler, probePID, fmt.Errorf("probe capabilities: %w", err)
 	}
 	caps.RecoveryChecked = true // the probe scan succeeded, so InRecovery is trustworthy
 	mk.Host, mk.VersionText = cc.Host, caps.VersionText
@@ -261,7 +265,7 @@ func probe(ctx context.Context, cc *pgx.ConnConfig) (Capabilities, PoolerInfo, e
 			}
 		}
 	}
-	return caps, pooler, nil
+	return caps, pooler, probePID, nil
 }
 
 // ReadOnlyTx runs fn inside its own short READ ONLY transaction and always rolls

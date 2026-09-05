@@ -107,7 +107,7 @@ func TestWhy_json(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &r); err != nil {
 		t.Fatalf("not valid JSON: %v\n%s", err, out)
 	}
-	if r.SchemaVersion != "1.0.0" || r.Database != "app" || len(r.Chains) == 0 {
+	if r.SchemaVersion != "1.1.0" || r.Database != "app" || len(r.Chains) == 0 {
 		t.Errorf("unexpected report: %+v", r)
 	}
 }
@@ -223,5 +223,20 @@ func TestWhy_windowTruncationIsExplained(t *testing.T) {
 	out := runWhyCmd(t, "--store", path, "--no-color")
 	if !strings.Contains(out, "24 more snapshot") || !strings.Contains(out, "--window") {
 		t.Errorf("window truncation must be named with the --window fix:\n%s", out)
+	}
+}
+
+// `pgbot why 10` (chain count) must keep working while `why --duration 10s
+// <dsn>` accepts a connection string in the same positional slot.
+func TestWhyArgIsDSN(t *testing.T) {
+	for _, dsn := range []string{"postgres://u@h/db", "postgresql://h/db", "host=h dbname=d"} {
+		if !whyArgIsDSN(dsn) {
+			t.Errorf("%q must read as a DSN", dsn)
+		}
+	}
+	for _, n := range []string{"10", "3"} {
+		if whyArgIsDSN(n) {
+			t.Errorf("%q must read as a chain count", n)
+		}
 	}
 }
