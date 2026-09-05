@@ -13,8 +13,10 @@ import (
 
 // gather runs the full read-only collection and returns a computed Context plus
 // the target host (for the header). It closes the connection before returning —
-// findings and rendering need no live connection. Shared by `ask` and `indexes`;
-// `inspect`/`explain` keep their own flow because they also render/exit.
+// findings and rendering need no live connection. Shared by every command that
+// only needs a Context (`ask`, `indexes`, `queries`, `tables`, `vacuum`, `tune`,
+// `report`, `config explain`, the MCP tools); `inspect`/`explain` keep their own
+// flow because they also render/exit.
 func gather(ctx context.Context, connString string, f inspectFlags) (*model.Context, string, error) {
 	target, err := conn.Connect(ctx, connString)
 	if err != nil {
@@ -47,6 +49,9 @@ func gather(ctx context.Context, connString string, f inspectFlags) (*model.Cont
 	return c, host, nil
 }
 
+// gatherOptions maps the command flags onto the collector. Deadline must be
+// forwarded: when it is zero the collector applies its own 20s+interval cap, which
+// silently overrides any larger --timeout the command was given.
 func gatherOptions(f inspectFlags) collect.Options {
 	return collect.Options{Interval: f.interval, ASHHz: f.ashHz, ASHWindow: f.window, Deadline: f.timeout}
 }

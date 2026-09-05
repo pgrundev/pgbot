@@ -24,7 +24,7 @@ const (
 // Options tune a collection run.
 type Options struct {
 	Interval     time.Duration // gap between the two counter samples (default 1s, min 500ms)
-	Deadline     time.Duration // hard cap on total wall time (default 5s + interval)
+	Deadline     time.Duration // hard cap on total wall time (default 20s + interval; the --timeout flag)
 	RawQueryText bool          // keep raw pg_stat_activity query text (default: scrub — PII)
 	ASHHz        int           // wait-event poll rate in Hz (default 10; 0 disables the sampler)
 	ASHWindow    time.Duration // active-session sampling window (default 5s)

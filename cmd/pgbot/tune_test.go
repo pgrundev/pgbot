@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/spf13/cobra"
 )
 
 func TestTuneTimeoutBoundsRun(t *testing.T) {
@@ -54,5 +56,46 @@ func TestGatherOptionsForwardsTimeout(t *testing.T) {
 
 	if got.Deadline != want {
 		t.Fatalf("gather collection deadline = %s; want %s", got.Deadline, want)
+	}
+}
+
+// Every collection command built on inspectFlags exposes --timeout with the same
+// 30s default, so `--timeout 60s` from the docs works uniformly. tune was the
+// one that lacked it (#26); keep the set in step.
+func TestCollectionCommandsShareTimeoutDefault(t *testing.T) {
+	cmds := map[string]func() *cobra.Command{
+		"tune":    newTuneCmd,
+		"indexes": newIndexesCmd,
+		"queries": newQueriesCmd,
+		"tables":  newTablesCmd,
+		"vacuum":  newVacuumCmd,
+		"inspect": newInspectCmd,
+	}
+	for name, build := range cmds {
+		fl := build().Flags().Lookup("timeout")
+		if fl == nil {
+			t.Errorf("%s: no --timeout flag", name)
+			continue
+		}
+		if fl.DefValue != "30s" {
+			t.Errorf("%s: --timeout default = %q; want \"30s\"", name, fl.DefValue)
+		}
+	}
+}
+
+func TestTuneTimeoutFlagParsesDurations(t *testing.T) {
+	cmd := newTuneCmd()
+	if err := cmd.Flags().Parse([]string{"--timeout=2m30s"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := cmd.Flags().GetDuration("timeout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := 150 * time.Second; got != want {
+		t.Fatalf("--timeout=2m30s parsed as %s; want %s", got, want)
+	}
+	if err := newTuneCmd().Flags().Parse([]string{"--timeout=soon"}); err == nil {
+		t.Fatal("--timeout=soon parsed without error; want a duration syntax error")
 	}
 }
