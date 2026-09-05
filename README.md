@@ -394,6 +394,31 @@ pgbot resolves the connection in this order: the argument first, then
 `$DATABASE_URL`, then `$PGBOT_DATABASE_URL`. Add `?sslmode=require` (or stricter)
 for any database reached over a network.
 
+### Reaching a private database
+
+A database on a private network — RDS/Aurora inside a VPC, or a Postgres behind a
+bastion — is reached through an SSH jump host:
+
+```sh
+pgbot inspect "postgres://pgbot_ro@db.internal:5432/appdb?sslmode=verify-full" \
+  --ssh-tunnel bastion.example.com    # or user@host:port, or a ~/.ssh/config alias
+```
+
+`--ssh-tunnel` is global — every command that opens a connection takes it — and
+`$PGBOT_SSH_TUNNEL` sets it for a whole session.
+
+The tunnel is a dialer, not an `ssh -L` forward, so **the DSN keeps naming the real
+host**: `sslmode=verify-full` still validates against that hostname, `.pgpass` still
+matches on it, and no local port is left open to everyone else on your machine.
+
+How the jump host is reached comes from your own `ssh_config` — `HostName`, `Port`,
+`User`, `IdentityFile`, `IdentitiesOnly`, `IdentityAgent`, `StrictHostKeyChecking`,
+`UserKnownHostsFile` — so a bare alias works and the host key is verified exactly
+the way your `ssh` verifies it: a host seen for the first time is accepted under
+your `StrictHostKeyChecking` setting and recorded in your known_hosts, and a key
+that later changes is refused. Your agent is offered before any key on disk, and
+one SSH connection serves the whole run. Raise `--timeout` if the link is slow.
+
 ### Environment reference
 
 | Variable | Purpose |
@@ -401,6 +426,7 @@ for any database reached over a network.
 | `DATABASE_URL` / `PGBOT_DATABASE_URL` | Connection used when no connection string is passed (checked in that order, after the argument). |
 | `NO_COLOR` | Disables ANSI output (as does a non-TTY, or `--no-color`). |
 | `XDG_STATE_HOME` | Where the baseline store lives; defaults to `~/.local/state`. |
+| `PGBOT_SSH_TUNNEL` | SSH jump host used when `--ssh-tunnel` isn't passed (`[user@]host[:port]`, or a `~/.ssh/config` alias). |
 | `PGBOT_CONFIG` | Path to `.pgbot.toml` (otherwise discovered from cwd upward, then `$XDG_CONFIG_HOME`). |
 | `OPENAI_API_KEY` | Enables `ask` / `explain` via OpenAI. Keys are never accepted as flags. |
 | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | Enables `ask` / `explain` via Google Gemini. |
@@ -519,6 +545,8 @@ pgbot inspect <connection-string>   # URL or libpq DSN, or set $DATABASE_URL
   --interval 1s          gap between the two counter samples (min 500ms)
   --no-store             don't read or write the local baseline
   --no-color             disable ANSI (also honors NO_COLOR and non-TTY)
+  --ssh-tunnel <host>    reach the database through an SSH jump host — global, so
+                         every command that connects takes it (also $PGBOT_SSH_TUNNEL)
 
 pgbot baselines list                # what's stored locally, per database
 pgbot baselines prune <fingerprint> # delete a database's snapshots

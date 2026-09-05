@@ -33,7 +33,7 @@ detection works even when the host is a bare IP or sits behind a proxy.
 
 ## Amazon RDS / Aurora
 
-- **Connecting:** you can't install on the RDS/Aurora instance (managed, no OS access) — run pgbot from a client that can reach it. For a **private** instance (typical prod), run pgbot from a small **EC2 in the same VPC**: it reaches the private endpoint over AWS's internal network, so the DB never needs public access, no SSH tunnel, no IP allow-listing — the only rule is the RDS security group allowing `5432` from the EC2's security group. For a **publicly accessible** instance, allow your IP in the security group and connect from your laptop.
+- **Connecting:** you can't install on the RDS/Aurora instance (managed, no OS access) — run pgbot from a client that can reach it. For a **private** instance (typical prod) there are two ways in: run pgbot from a small **EC2 in the same VPC** — it reaches the private endpoint over AWS's internal network, so the DB never needs public access, no SSH tunnel, no IP allow-listing, and the only rule is the RDS security group allowing `5432` from the EC2's security group — or keep pgbot on your laptop and reach the endpoint through a bastion with `--ssh-tunnel` (see [Reaching a private database](../README.md#reaching-a-private-database)), which still validates `sslmode=verify-full` against the real endpoint name. For a **publicly accessible** instance, allow your IP in the security group and connect from your laptop.
   ```bash
   pgbot inspect "postgres://pgbot_ro@mydb.abc123.us-east-1.rds.amazonaws.com:5432/appdb?sslmode=require"
   ```

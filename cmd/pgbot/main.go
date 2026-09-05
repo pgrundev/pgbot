@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/pgrundev/pgbot/internal/conn"
 	"github.com/spf13/cobra"
 )
 
@@ -24,6 +25,9 @@ func main() {
 	// and the store finishes its write. cmd.Context() in every handler is this ctx.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// One SSH connection serves every Target this process opens; drop it on the
+	// way out rather than per-Target (--all-databases and `mcp` open many).
+	defer conn.CloseSSHTunnel()
 
 	root := &cobra.Command{
 		Use:           "pgbot",
@@ -56,12 +60,24 @@ func main() {
 	root.AddCommand(newActivityCmd())
 	root.AddCommand(newReportCmd())
 
+	// --ssh-tunnel is global: every command that takes a connection can need it,
+	// and it changes only HOW the DSN is reached, never what is inspected.
+	var sshTunnel string
+	root.PersistentFlags().StringVar(&sshTunnel, "ssh-tunnel", "",
+		"reach the database through this SSH jump host ([user@]host[:port]; a bare alias is resolved via ~/.ssh/config)")
+
 	// enteredRun distinguishes a malformed invocation (bad flags/args/unknown
 	// command — cobra fails before PersistentPreRun) from an execution failure
 	// (a handler ran and returned an error). B5's --fail-on makes exit codes a
 	// public interface, so the two must not share code 3.
 	enteredRun := false
-	root.PersistentPreRun = func(*cobra.Command, []string) { enteredRun = true }
+	root.PersistentPreRun = func(*cobra.Command, []string) {
+		enteredRun = true
+		if sshTunnel == "" {
+			sshTunnel = os.Getenv(conn.SSHTunnelEnv)
+		}
+		conn.SetSSHTunnel(sshTunnel)
+	}
 
 	if err := root.ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "pgbot: "+err.Error())

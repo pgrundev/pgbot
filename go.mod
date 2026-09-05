@@ -1,14 +1,16 @@
 module github.com/pgrundev/pgbot
 
-go 1.25.13
+go 1.26.8
 
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/invopop/jsonschema v0.14.0
 	github.com/jackc/pgx/v5 v5.10.0
+	github.com/kevinburke/ssh_config v1.4.0
 	github.com/owenrumney/go-sarif/v2 v2.3.3
 	github.com/spf13/cobra v1.10.2
+	golang.org/x/crypto v0.56.0
 	golang.org/x/sync v0.22.0
 	golang.org/x/term v0.45.0
 	modernc.org/sqlite v1.56.0
@@ -40,7 +42,7 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.39.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	modernc.org/libc v1.74.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect

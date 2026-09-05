@@ -7,6 +7,28 @@ separately by `model.SchemaVersion` (currently 1.2.0).
 
 ## [Unreleased]
 
+### Added
+- **`--ssh-tunnel [user@]host[:port]` — reach a database through an SSH jump
+  host** (#28, contributed by @DiegoDAF). A global flag (or `$PGBOT_SSH_TUNNEL`)
+  for the RDS-in-a-VPC / Postgres-behind-a-bastion case. It is installed as
+  pgx's dialer rather than an `ssh -L` forward, so the DSN keeps naming the
+  real host: `sslmode=verify-full` and `.pgpass` still match on it, and no
+  local port is left open. How the jump host is reached comes from your own
+  `ssh_config` (`HostName`, `Port`, `User`, `IdentityFile`, `IdentitiesOnly`,
+  `IdentityAgent`, `StrictHostKeyChecking`, `UserKnownHostsFile`); the agent is
+  offered before any key on disk; one SSH connection serves the whole run and
+  is re-dialed once if the transport dies under a long-lived `mcp` process. A
+  host key accepted on first sight is recorded in your known_hosts, as `ssh`
+  does, so a later change is refused. Two new pure-Go dependencies:
+  `github.com/kevinburke/ssh_config` and `golang.org/x/crypto`.
+
+### Changed
+- **Builds with Go 1.26.** `golang.org/x/crypto` v0.56.0 — the first release
+  clearing the advisories `govulncheck` reports against the SSH package — needs
+  Go 1.26, so `go.mod` moves from 1.25.13 to 1.26.8. With the default
+  `GOTOOLCHAIN=auto` the right toolchain is fetched on first build; CI and the
+  release pipeline already read the version from `go.mod`.
+
 ### Fixed
 - **`pgbot tune --timeout`** (#26, #30, contributed by @YIKUAIBANZI). `tune` ran
   under a fixed 30s budget with no flag to raise it, so a slow or remote database
