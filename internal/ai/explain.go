@@ -117,22 +117,36 @@ func BuildAskPrompt(c *model.Context, question string) (system, user string) {
 
 // Explain builds the prompt and calls the model, returning the labeled-elsewhere
 // explanation text. A nil/empty findings set still gets an explanation (the model
-// is told to confirm health briefly). The Provider may be OpenAI or Gemini.
-func Explain(ctx context.Context, p Provider, mc *model.Context) (string, error) {
-	if p == nil {
-		return "", fmt.Errorf("no AI client")
-	}
+// is told to confirm health briefly).
+func Explain(ctx context.Context, m LanguageModel, mc *model.Context) (string, error) {
 	system, user := BuildExplainPrompt(mc)
-	return p.Generate(ctx, system, user)
+	return generate(ctx, m, system, user)
 }
 
 // Ask answers a specific question grounded on the report.
-func Ask(ctx context.Context, p Provider, mc *model.Context, question string) (string, error) {
-	if p == nil {
-		return "", fmt.Errorf("no AI client")
-	}
+func Ask(ctx context.Context, m LanguageModel, mc *model.Context, question string) (string, error) {
 	system, user := BuildAskPrompt(mc, question)
-	return p.Generate(ctx, system, user)
+	return generate(ctx, m, system, user)
+}
+
+// generate is the one place the explanation layer meets a provider. Low
+// temperature because we want the model reading the findings, not riffing on
+// them; 8192 output tokens because current models spend part of that budget
+// thinking before the visible text.
+func generate(ctx context.Context, m LanguageModel, system, user string) (string, error) {
+	if m == nil {
+		return "", fmt.Errorf("no model configured")
+	}
+	resp, err := m.Generate(ctx, Call{
+		System:          system,
+		Prompt:          user,
+		Temperature:     f64(0.2),
+		MaxOutputTokens: i64(8192),
+	})
+	if err != nil {
+		return "", err
+	}
+	return resp.Text, nil
 }
 
 func topBuckets(b []model.WaitBucket, n int) []model.WaitBucket {

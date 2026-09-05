@@ -25,8 +25,8 @@ func newAskCmd() *cobra.Command {
 		Short: "Ask an AI about your database, grounded on pgbot's findings",
 		Long: "Runs the same read-only inspection, then answers your question using ONLY the\n" +
 			"deterministic findings (the model can't reach into the database). Connection\n" +
-			"comes from --url or $DATABASE_URL. Sends the PII-free findings to an AI provider —\n" +
-			"set $OPENAI_API_KEY (OpenAI) or $GEMINI_API_KEY (Google Gemini).",
+			"comes from --url or $DATABASE_URL. Sends the PII-free findings to the model you\n" +
+			"configured — Gemini, Anthropic, OpenAI, xAI, or an OpenAI-compatible endpoint.",
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAsk(cmd, strings.Join(args, " "), url, f, yes)
@@ -38,17 +38,16 @@ func newAskCmd() *cobra.Command {
 	fl.IntVar(&f.ashHz, "ash-hz", 10, "active-session sampling rate in Hz (0 disables)")
 	fl.BoolVar(&f.noStore, "no-store", false, "do not read or write the local baseline store")
 	fl.BoolVar(&f.strictPooler, "strict-pooler", false, "refuse (exit 3) behind a transaction pooler")
-	fl.BoolVar(&yes, "yes", false, "skip the 'this sends data to the AI provider' confirmation prompt")
+	fl.BoolVar(&yes, "yes", false, "skip the data-disclosure confirmation prompt")
 	return cmd
 }
 
 func runAsk(cmd *cobra.Command, question, url string, f inspectFlags, yes bool) error {
-	client, err := ai.NewFromEnv()
+	llm, err := ai.Resolve()
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "pgbot ask: this sends the PII-free findings to %s (model %s).\n", client.Vendor(), client.ModelName())
-	if !yes && isInteractive() && !confirm() {
+	if !confirmDisclosure("pgbot ask", llm, yes) {
 		return fmt.Errorf("aborted")
 	}
 
@@ -66,8 +65,12 @@ func runAsk(cmd *cobra.Command, question, url string, f inspectFlags, yes bool) 
 		return err
 	}
 
-	answer, aiErr := ai.Ask(ctx, client, c, question)
-	printAnswer(useColor(false), client.ModelName(), answer, aiErr)
+	// Give the model its own deadline instead of the remainder of collection's
+	// budget. Local models may need substantially longer than hosted providers.
+	aiCtx, aiCancel := context.WithTimeout(cmd.Context(), 3*time.Minute)
+	defer aiCancel()
+	answer, aiErr := ai.Ask(aiCtx, llm, c, question)
+	printAnswer(useColor(false), llm.Model(), answer, aiErr)
 	if aiErr == nil {
 		// `ask` prints only the model's prose, so a destructive-action guard that
 		// the model may have reworded away must be reasserted here, verbatim from
@@ -125,13 +128,4 @@ func printAnswer(color bool, modelName, text string, aiErr error) {
 	fmt.Println(text)
 	fmt.Println()
 	fmt.Println(st.Dim("— " + modelName + " · a reading of pgbot's findings; verify before acting"))
-}
-
-// confirm reads a y/N from stdin.
-func confirm() bool {
-	fmt.Fprint(os.Stderr, "Continue? [y/N] ")
-	var resp string
-	fmt.Fscanln(os.Stdin, &resp)
-	r := strings.ToLower(strings.TrimSpace(resp))
-	return r == "y" || r == "yes"
 }

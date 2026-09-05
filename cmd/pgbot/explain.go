@@ -26,12 +26,12 @@ func newExplainCmd() *cobra.Command {
 		Use:   "explain <connection-string>",
 		Short: "Inspect, then have an AI explain the findings in plain language",
 		Long: "Runs the same read-only inspection as `pgbot inspect`, prints the deterministic\n" +
-			"report, then sends the PII-free findings to an AI provider for a plain-language\n" +
+			"report, then sends the PII-free findings to a model for a plain-language\n" +
 			"explanation. The findings are still computed locally in Go — the model only\n" +
 			"explains them, never invents them.\n\n" +
-			"The key is read from $OPENAI_API_KEY (OpenAI) or $GEMINI_API_KEY (Google Gemini),\n" +
-			"never a flag; set PGBOT_AI_PROVIDER to force one. This is the only pgbot command\n" +
-			"that sends data off the machine; the payload is the same PII-free Context you can\n" +
+			"Configure Gemini, Anthropic, OpenAI, xAI, or an OpenAI-compatible endpoint. Keys\n" +
+			"are read from the environment, never a flag. With a remote model, the payload is\n" +
+			"the same PII-free Context you can\n" +
 			"inspect with `pgbot inspect --json`.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -46,7 +46,7 @@ func newExplainCmd() *cobra.Command {
 	fl.BoolVar(&f.strictPooler, "strict-pooler", false, "refuse (exit 3) if connected through a transaction pooler")
 	fl.IntVar(&f.ashHz, "ash-hz", 10, "active-session sampling rate in Hz (0 disables the wait-event profile)")
 	fl.DurationVar(&f.window, "window", 5*time.Second, "active-session sampling window")
-	fl.BoolVar(&yes, "yes", false, "skip the 'this sends data to the AI provider' confirmation prompt")
+	fl.BoolVar(&yes, "yes", false, "skip the data-disclosure confirmation prompt")
 	fl.StringVar(&f.config, "config", "", "path to .pgbot.toml (default: discover from cwd upward)")
 	fl.StringArrayVar(&f.ignore, "ignore", nil, "suppress a finding for this run: finding[:object] (repeatable)")
 	fl.StringVar(&f.failOn, "fail-on", "warn", "exit non-zero on findings at/above this severity: critical|warn|info|none")
@@ -59,21 +59,12 @@ func runExplain(cmd *cobra.Command, args []string, f inspectFlags, yes bool) err
 	}
 	// Build the model client first — fail fast before we connect if the key is
 	// missing, so the user isn't surprised after a full inspection.
-	client, err := ai.NewFromEnv()
+	llm, err := ai.Resolve()
 	if err != nil {
 		return err
 	}
-
-	// This is the one command that sends data off the box. Say so, loudly, and
-	// require an explicit go-ahead unless --yes (or non-interactive).
-	fmt.Fprintf(os.Stderr, "pgbot explain: this sends the PII-free findings (same as `inspect --json`) to %s (model %s).\n", client.Vendor(), client.ModelName())
-	if !yes && isInteractive() {
-		fmt.Fprint(os.Stderr, "Continue? [y/N] ")
-		var resp string
-		fmt.Fscanln(os.Stdin, &resp)
-		if r := strings.ToLower(strings.TrimSpace(resp)); r != "y" && r != "yes" {
-			return fmt.Errorf("aborted")
-		}
+	if !confirmDisclosure("pgbot explain", llm, yes) {
+		return fmt.Errorf("aborted")
 	}
 
 	connString := firstNonEmpty(argAt(args, 0), os.Getenv("DATABASE_URL"), os.Getenv("PGBOT_DATABASE_URL"))
@@ -126,8 +117,12 @@ func runExplain(cmd *cobra.Command, args []string, f inspectFlags, yes bool) err
 	// 2. The AI explanation — clearly labeled as model-generated. If it fails, the
 	// deterministic report above still stands; we just note the explanation is
 	// unavailable and exit on the findings' code.
-	explanation, aiErr := ai.Explain(ctx, client, c)
-	printAISection(color, client.ModelName(), explanation, aiErr)
+	// Give the model its own deadline instead of the remainder of collection's
+	// budget. Local models may need substantially longer than hosted providers.
+	aiCtx, aiCancel := context.WithTimeout(cmd.Context(), 3*time.Minute)
+	defer aiCancel()
+	explanation, aiErr := ai.Explain(aiCtx, llm, c)
+	printAISection(color, llm.Model(), explanation, aiErr)
 	// The destructive-action guards, reasserted by code AFTER the model text — so a
 	// reworded or truncated explanation can never be the thing that drops them.
 	if aiErr == nil {
@@ -136,6 +131,26 @@ func runExplain(cmd *cobra.Command, args []string, f inspectFlags, yes bool) err
 
 	os.Exit(exitCode(c.Findings, f.failOn))
 	return nil
+}
+
+// confirmDisclosure identifies the remote destination before data is sent.
+// Local endpoints do not send findings off the machine and need no confirmation.
+func confirmDisclosure(cmdName string, llm ai.LanguageModel, yes bool) bool {
+	if ai.Local(llm.Endpoint()) {
+		fmt.Fprintf(os.Stderr, "%s: using a local model at %s (%s) — the findings do not leave this machine.\n",
+			cmdName, ai.Host(llm.Endpoint()), llm.Model())
+		return true
+	}
+	fmt.Fprintf(os.Stderr, "%s: this sends the PII-free findings (same as `inspect --json`) to %s at %s (model %s).\n",
+		cmdName, llm.Provider(), ai.Host(llm.Endpoint()), llm.Model())
+	if yes || !isInteractive() {
+		return true
+	}
+	fmt.Fprint(os.Stderr, "Continue? [y/N] ")
+	var resp string
+	fmt.Fscanln(os.Stdin, &resp)
+	r := strings.ToLower(strings.TrimSpace(resp))
+	return r == "y" || r == "yes"
 }
 
 // printAISection renders the labeled AI block. The banner makes it unmistakable

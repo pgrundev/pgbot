@@ -10,33 +10,14 @@ import (
 	"testing"
 )
 
-func TestNewGeminiFromEnv(t *testing.T) {
-	t.Setenv("GEMINI_API_KEY", "")
-	t.Setenv("GOOGLE_API_KEY", "")
-	if _, err := NewGeminiFromEnv(); err == nil {
-		t.Error("missing key must be an error")
-	}
-	// GOOGLE_API_KEY is accepted as a fallback (the SDK's other convention).
-	t.Setenv("GOOGLE_API_KEY", "fromgoogle")
-	if c, err := NewGeminiFromEnv(); err != nil || c.APIKey != "fromgoogle" {
-		t.Errorf("GOOGLE_API_KEY fallback not honored: %v / %+v", err, c)
-	}
-	t.Setenv("GOOGLE_API_KEY", "")
-	t.Setenv("GEMINI_API_KEY", "secret")
-	t.Setenv("PGBOT_GEMINI_MODEL", "gemini-3-pro")
-	c, err := NewGeminiFromEnv()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.APIKey != "secret" || c.Model != "gemini-3-pro" {
-		t.Errorf("env not honored: %+v", c)
-	}
-	if c.BaseURL != defaultBaseURL {
-		t.Errorf("default base URL wrong: %s", c.BaseURL)
-	}
+// geminiFor builds a model pointed at a test server, bypassing the environment.
+func geminiFor(url, key, model string) LanguageModel {
+	p := &GeminiProvider{APIKey: key, BaseURL: url, HTTP: http.DefaultClient}
+	m, _ := p.LanguageModel(context.Background(), model)
+	return m
 }
 
-func TestGenerate_success(t *testing.T) {
+func TestGemini_success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("x-goog-api-key"); got != "k123" {
 			t.Errorf("API key must travel in the x-goog-api-key header, got %q", got)
@@ -63,37 +44,44 @@ func TestGenerate_success(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := &Client{APIKey: "k123", Model: "m1", BaseURL: srv.URL, HTTP: srv.Client()}
-	out, err := c.Generate(context.Background(), "be terse", "the report")
+	out, err := geminiFor(srv.URL, "k123", "m1").Generate(context.Background(), Call{System: "be terse", Prompt: "the report"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "Looks healthy." {
-		t.Errorf("unexpected output %q", out)
+	if out.Text != "Looks healthy." {
+		t.Errorf("unexpected output %q", out.Text)
 	}
 }
 
-func TestGenerate_apiError(t *testing.T) {
+func TestGemini_apiError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(genResponse{Error: &apiError{Code: 400, Status: "INVALID_ARGUMENT", Message: "API key not valid"}})
 	}))
 	defer srv.Close()
 
-	c := &Client{APIKey: "bad", Model: "m1", BaseURL: srv.URL, HTTP: srv.Client()}
-	_, err := c.Generate(context.Background(), "", "x")
+	_, err := geminiFor(srv.URL, "bad", "m1").Generate(context.Background(), Call{Prompt: "x"})
 	if err == nil || !strings.Contains(err.Error(), "API key not valid") {
 		t.Errorf("expected a surfaced API error, got %v", err)
 	}
 }
 
-func TestGenerate_noCandidates(t *testing.T) {
+func TestGemini_noCandidates(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(genResponse{}) // 200, no candidates
 	}))
 	defer srv.Close()
-	c := &Client{APIKey: "k", Model: "m", BaseURL: srv.URL, HTTP: srv.Client()}
-	if _, err := c.Generate(context.Background(), "", "x"); err == nil {
+	if _, err := geminiFor(srv.URL, "k", "m").Generate(context.Background(), Call{Prompt: "x"}); err == nil {
 		t.Error("no candidates should be an error, not an empty success")
+	}
+}
+
+func TestGemini_defaultModel(t *testing.T) {
+	m := geminiFor("https://example.test", "k", "")
+	if m.Model() != defaultGeminiModel {
+		t.Errorf("empty model id should fall back to the default, got %q", m.Model())
+	}
+	if m.Provider() != "gemini" {
+		t.Errorf("provider name wrong: %q", m.Provider())
 	}
 }
