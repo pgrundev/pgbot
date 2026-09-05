@@ -258,6 +258,7 @@ findings never move them.
 | npx (no install) | `npx @pgbot/cli inspect "$DATABASE_URL"` |
 | Script (cosign signature + checksum) | `curl -fsSL https://pgbot.dev/install \| sh` |
 | Homebrew | `brew install pgrundev/tap/pgbot` |
+| Arch User Repository | `yay -S pgbot-bin` |
 | Go | `go install github.com/pgrundev/pgbot/cmd/pgbot@latest` |
 | Docker | `docker run --rm ghcr.io/pgrundev/pgbot inspect "$DATABASE_URL"` |
 | Windows / manual | download the archive for your OS/arch from [Releases](https://github.com/pgrundev/pgbot/releases) (Linux/macOS `.tar.gz`, Windows `.zip`) |
