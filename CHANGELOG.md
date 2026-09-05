@@ -7,6 +7,15 @@ separately by `model.SchemaVersion` (currently 1.2.0).
 
 ## [Unreleased]
 
+### Fixed
+- **`pgbot tune --timeout`** (#26, #30, contributed by @YIKUAIBANZI). `tune` ran
+  under a fixed 30s budget with no flag to raise it, so a slow or remote database
+  died with `collect: context deadline exceeded`; it now takes the same
+  `--timeout` (default 30s) as the other collection commands. The shared
+  `gather` path also forwards that budget to the collector, which previously
+  kept its own 20s+interval cap regardless — so `--timeout` above ~21s on
+  `indexes`, `queries`, `tables`, and `vacuum` now actually extends the run.
+
 ## [0.7.2] - 2026-09-01
 
 ### Added

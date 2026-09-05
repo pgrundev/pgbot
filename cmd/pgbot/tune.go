@@ -29,6 +29,7 @@ func newTuneCmd() *cobra.Command {
 	fl := cmd.Flags()
 	fl.BoolVar(&f.noColor, "no-color", false, "disable ANSI color")
 	fl.DurationVar(&f.interval, "interval", time.Second, "gap between the two counter samples (min 500ms)")
+	fl.DurationVar(&f.timeout, "timeout", 30*time.Second, "total wall-clock budget for the run (raise it for slow or remote databases)")
 	return cmd
 }
 
@@ -40,7 +41,7 @@ func runTune(cmd *cobra.Command, args []string, f inspectFlags) error {
 	f.ashHz = 0 // no wait sampling needed for tuning
 	f.noStore = true
 
-	ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(cmd.Context(), f.timeout)
 	defer cancel()
 
 	c, host, err := gather(ctx, connString, f)
