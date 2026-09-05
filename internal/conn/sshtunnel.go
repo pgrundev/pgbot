@@ -92,16 +92,48 @@ func sshDialFunc() func(context.Context, string, string) (net.Conn, error) {
 		if err == nil {
 			return nc, nil
 		}
+		// The jump host answered and refused this one forward (the database host is
+		// unreachable from there, or forwarding is prohibited), or our own context
+		// ran out. The transport is fine — closing it would cut every other pool
+		// connection riding it — so surface the error as-is.
+		if !transportDead(ctx, err) {
+			return nil, err
+		}
 		// A pooled connection can outlive the SSH transport (an idle timeout on the
 		// jump host, a laptop that slept, a VPN that flapped). Drop the dead client
 		// and re-dial once before surfacing the failure — the pool would otherwise
 		// stay broken for the rest of a long-lived `pgbot mcp` process.
-		CloseSSHTunnel()
+		dropTunnelClient(c)
 		c, rerr := tunnelClient(ctx)
 		if rerr != nil {
 			return nil, fmt.Errorf("%w (reconnect failed: %v)", err, rerr)
 		}
 		return c.DialContext(ctx, network, addr)
+	}
+}
+
+// transportDead reports whether a channel-open failure means the SSH connection
+// itself is gone, as opposed to the jump host rejecting this one channel (which
+// arrives as an OpenChannelError over a healthy transport) or the caller's
+// context expiring first.
+func transportDead(ctx context.Context, err error) bool {
+	var refused *ssh.OpenChannelError
+	if errors.As(err, &refused) {
+		return false
+	}
+	return ctx.Err() == nil
+}
+
+// dropTunnelClient closes c and forgets it — but only while c is still the shared
+// client. Pool connections dial concurrently, so by the time one goroutine sees
+// its dial fail another may already have replaced the dead client; closing the
+// replacement would tear down channels the other goroutines just opened on it.
+func dropTunnelClient(c *ssh.Client) {
+	tunnelMu.Lock()
+	defer tunnelMu.Unlock()
+	if tunnelConn == c {
+		_ = c.Close()
+		tunnelConn = nil
 	}
 }
 
@@ -138,10 +170,11 @@ func dialSSH(ctx context.Context, spec string) (*ssh.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	auths, err := sshAuthMethods(h)
+	auths, closeAgent, err := sshAuthMethods(h)
 	if err != nil {
 		return nil, err
 	}
+	defer closeAgent()
 	if len(auths) == 0 {
 		return nil, fmt.Errorf("no usable credentials: no key in the agent and no readable IdentityFile for %q", h.alias)
 	}
@@ -248,11 +281,15 @@ func resolveSSHHost(spec string) (sshHost, error) {
 
 // sshAuthMethods builds the auth chain: the agent first (it holds keys pgbot
 // cannot read off disk, and never exposes the private material), then each
-// readable IdentityFile.
-func sshAuthMethods(h sshHost) ([]ssh.AuthMethod, error) {
+// readable IdentityFile. The returned closer releases the agent socket; call it
+// once the handshake is over, since the signers are only consulted during auth
+// and a long-lived `mcp` process would otherwise leak one descriptor per dial.
+func sshAuthMethods(h sshHost) ([]ssh.AuthMethod, func(), error) {
 	var out []ssh.AuthMethod
+	closeAgent := func() {}
 	if sock := agentSocket(h.alias); sock != "" {
 		if ac, err := net.Dial("unix", sock); err == nil {
+			closeAgent = func() { _ = ac.Close() }
 			client := agent.NewClient(ac)
 			signers := client.Signers
 			if h.idsOnly {
@@ -281,7 +318,7 @@ func sshAuthMethods(h sshHost) ([]ssh.AuthMethod, error) {
 		}
 		out = append(out, ssh.PublicKeys(signer))
 	}
-	return out, nil
+	return out, closeAgent, nil
 }
 
 // onlyIdentities implements IdentitiesOnly against the agent: keep just the
@@ -341,17 +378,20 @@ func promptForKey(path string, raw []byte) (ssh.Signer, error) {
 // $SSH_AUTH_SOCK` is the idiomatic way to spell "whatever agent this shell has"
 // — and accepts the bare name SSH_AUTH_SOCK for the same thing. Taking the value
 // literally yields a path that cannot be dialed, and the agent silently drops out
-// of the auth chain.
+// of the auth chain. An empty result means "no agent".
 func agentSocket(alias string) string {
 	return expandAgentSpec(ssh_config.Get(alias, "IdentityAgent"))
 }
 
-// expandAgentSpec turns an IdentityAgent value into a socket path, falling back
-// to SSH_AUTH_SOCK for the empty, "none", and unresolvable cases.
+// expandAgentSpec turns an IdentityAgent value into a socket path: SSH_AUTH_SOCK
+// for the empty and unresolvable cases, and "" for `none`, which ssh_config(5)
+// defines as disabling the agent for that host.
 func expandAgentSpec(ia string) string {
 	ia = strings.Trim(strings.TrimSpace(ia), `"`)
 	switch {
-	case ia == "", strings.EqualFold(ia, "none"), ia == "SSH_AUTH_SOCK":
+	case strings.EqualFold(ia, "none"):
+		return ""
+	case ia == "", ia == "SSH_AUTH_SOCK":
 		return os.Getenv("SSH_AUTH_SOCK")
 	}
 	if p := expandTilde(os.ExpandEnv(ia)); p != "" {
@@ -365,16 +405,37 @@ func expandAgentSpec(ia string) string {
 // ask, which pgbot cannot honour non-interactively) accepts a host it has never
 // seen but still refuses one whose key CHANGED — the case that actually signals
 // interception. A changed key is refused under every mode except an explicit no.
+//
+// A key accepted on first sight is recorded in the first UserKnownHostsFile, as
+// ssh does: without that, every run would be a "first sight" and a later,
+// different key could never be told apart from a new host.
 func hostKeyCallback(alias string) (ssh.HostKeyCallback, error) {
 	strict := strings.ToLower(ssh_config.Get(alias, "StrictHostKeyChecking"))
-	files := knownHostsFiles(alias)
+	paths := knownHostsPaths(alias)
+	files := filterUsableKnownHosts(paths)
+	record := ""
+	if len(paths) > 0 {
+		record = paths[0]
+	}
+	accept := func(hostname string, key ssh.PublicKey) error {
+		fmt.Fprintf(os.Stderr, "pgbot: accepting unknown ssh host key for %q (%s)\n", alias, ssh.FingerprintSHA256(key))
+		recordHostKey(record, hostname, key)
+		return nil
+	}
 
 	if len(files) == 0 {
 		if strict == "yes" {
 			return nil, errors.New("StrictHostKeyChecking=yes but no readable UserKnownHostsFile — cannot verify the jump host")
 		}
-		fmt.Fprintf(os.Stderr, "pgbot: ssh host key for %q is not being verified (no known_hosts in effect)\n", alias)
-		return ssh.InsecureIgnoreHostKey(), nil
+		if record == "" {
+			fmt.Fprintf(os.Stderr, "pgbot: ssh host key for %q is not being verified (UserKnownHostsFile is /dev/null)\n", alias)
+			return ssh.InsecureIgnoreHostKey(), nil
+		}
+		// No known_hosts yet, so every host is a first sight: accept and record it,
+		// and the next run verifies against what was recorded.
+		return func(hostname string, _ net.Addr, key ssh.PublicKey) error {
+			return accept(hostname, key)
+		}, nil
 	}
 
 	base, err := knownhosts.New(files...)
@@ -399,19 +460,38 @@ func hostKeyCallback(alias string) (ssh.HostKeyCallback, error) {
 			return fmt.Errorf("host key for %q does not match known_hosts — refusing to connect", alias)
 		}
 		// Unknown host.
-		switch strict {
-		case "yes":
+		if strict == "yes" {
 			return fmt.Errorf("host %q is not in known_hosts and StrictHostKeyChecking=yes", alias)
-		default:
-			fmt.Fprintf(os.Stderr, "pgbot: accepting unknown ssh host key for %q (%s)\n", alias, ssh.FingerprintSHA256(key))
-			return nil
 		}
+		return accept(hostname, key)
 	}, nil
 }
 
-// knownHostsFiles resolves UserKnownHostsFile to the files that actually exist.
-// /dev/null is a deliberate "don't verify" and is dropped along with the rest.
-func knownHostsFiles(alias string) []string {
+// recordHostKey appends a newly accepted key to path the way ssh does under
+// accept-new. A failure to write is reported once and never blocks the
+// connection — the user chose a policy that accepts unknown hosts.
+func recordHostKey(path, hostname string, key ssh.PublicKey) {
+	if path == "" {
+		return
+	}
+	err := os.MkdirAll(filepath.Dir(path), 0o700)
+	if err == nil {
+		var f *os.File
+		if f, err = os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
+			_, err = fmt.Fprintln(f, knownhosts.Line([]string{hostname}, key))
+			if cerr := f.Close(); err == nil {
+				err = cerr
+			}
+		}
+	}
+	if err != nil {
+		warnOnce("known_hosts:"+path, fmt.Sprintf("pgbot: could not record the host key in %s: %v", path, err))
+	}
+}
+
+// knownHostsPaths resolves UserKnownHostsFile to expanded paths, in config
+// order. /dev/null is a deliberate "don't verify" and is dropped.
+func knownHostsPaths(alias string) []string {
 	var specified []string
 	for _, v := range ssh_config.GetAll(alias, "UserKnownHostsFile") {
 		specified = append(specified, strings.Fields(v)...)
@@ -419,7 +499,13 @@ func knownHostsFiles(alias string) []string {
 	if len(specified) == 0 {
 		specified = []string{"~/.ssh/known_hosts", "~/.ssh/known_hosts2"}
 	}
-	return filterUsableKnownHosts(specified)
+	var out []string
+	for _, f := range specified {
+		if p := expandTilde(strings.Trim(f, `"`)); p != "" && p != os.DevNull {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // filterUsableKnownHosts keeps only paths that can actually verify a host key.

@@ -414,7 +414,9 @@ matches on it, and no local port is left open to everyone else on your machine.
 How the jump host is reached comes from your own `ssh_config` — `HostName`, `Port`,
 `User`, `IdentityFile`, `IdentitiesOnly`, `IdentityAgent`, `StrictHostKeyChecking`,
 `UserKnownHostsFile` — so a bare alias works and the host key is verified exactly
-the way your `ssh` verifies it. Your agent is offered before any key on disk, and
+the way your `ssh` verifies it: a host seen for the first time is accepted under
+your `StrictHostKeyChecking` setting and recorded in your known_hosts, and a key
+that later changes is refused. Your agent is offered before any key on disk, and
 one SSH connection serves the whole run. Raise `--timeout` if the link is slow.
 
 ### Environment reference

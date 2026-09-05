@@ -133,8 +133,10 @@ func TestAgentSocket_expandsEnvReference(t *testing.T) {
 	if got := expandAgentSpec(""); got != "/tmp/agent.test" {
 		t.Errorf("expandAgentSpec(empty) = %q", got)
 	}
-	if got := expandAgentSpec("none"); got != "/tmp/agent.test" {
-		t.Errorf("expandAgentSpec(none) = %q", got)
+	// ssh_config(5): "Setting the socket name to none disables the use of an
+	// authentication agent" — it is the opposite of unset.
+	if got := expandAgentSpec("none"); got != "" {
+		t.Errorf("expandAgentSpec(none) = %q; want \"\" (agent disabled)", got)
 	}
 	if got := expandAgentSpec(`"/run/user/1000/keyring/ssh"`); got != "/run/user/1000/keyring/ssh" {
 		t.Errorf("expandAgentSpec(quoted path) = %q", got)
