@@ -44,12 +44,33 @@ func Connect(ctx context.Context, connString string) (*Target, error) {
 // the connString supplies host/auth/TLS and `database` names which database on
 // that server to inspect. Empty database keeps the connString's own.
 func ConnectDB(ctx context.Context, connString, database string) (*Target, error) {
+	return connect(ctx, connString, database, "")
+}
+
+// ConnectDBAt is ConnectDB with the host overridden as well (for
+// --all-instances): the connString supplies auth and TLS settings, `host` names
+// which cluster member to reach. The TLS server name follows the host, so
+// sslmode=verify-full validates that member's own certificate.
+func ConnectDBAt(ctx context.Context, connString, database, host string) (*Target, error) {
+	return connect(ctx, connString, database, host)
+}
+
+func connect(ctx context.Context, connString, database, host string) (*Target, error) {
 	cfg, err := pgxpool.ParseConfig(connString)
 	if err != nil {
 		return nil, fmt.Errorf("parse connection string: %w", err)
 	}
 	if database != "" {
 		cfg.ConnConfig.Database = database
+	}
+	if host != "" {
+		cfg.ConnConfig.Host = host
+		cfg.ConnConfig.Fallbacks = nil // a multi-host DSN names the cluster, not this member
+		if tc := cfg.ConnConfig.TLSConfig; tc != nil {
+			tc = tc.Clone()
+			tc.ServerName = host
+			cfg.ConnConfig.TLSConfig = tc
+		}
 	}
 	cfg.MaxConns = maxConns
 	cfg.MinConns = 0

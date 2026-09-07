@@ -29,7 +29,7 @@
   <a href="docs/providers.md">Provider notes</a>
 </p>
 
-> **Status: beta.** The `--json` contract is versioned (currently `1.2.0`, JSON
+> **Status: beta.** The `--json` contract is versioned (currently `1.3.0`, JSON
 > Schema published in [`schema/`](schema/)) and breaking changes to it are
 > treated as breaking changes to the tool. The human-readable report is **not**
 > a stable interface — parse `--json`, not the terminal output.
@@ -251,6 +251,7 @@ Key `inspect` flags:
 | `--profile=full\|schema` | `schema` runs only catalog-derived findings — safe on an empty CI database |
 | `--fail-on-new <base.json>` | act only on findings not already in a base report (migration PRs) |
 | `--all-databases` | inspect every database in the cluster; cluster-wide findings reported once |
+| `--all-instances` | Aurora (experimental): discover every writer and reader instance behind the cluster endpoint and inspect each; composes with `--all-databases` |
 | `--config <path>` | a `.pgbot.toml` for thresholds, severity remaps, and `[[ignore]]` rules |
 
 Exit codes are a scriptable contract: `0` clean · `1` warn · `2` critical · `3`
@@ -801,7 +802,7 @@ rates; the rest are point-in-time reads trended against the baseline.
 ## The `--json` contract
 
 `--json` (and `--format=json`) is the interface to build on — a versioned,
-PII-free document (`schema_version`, currently `1.2.0`) whose machine-checkable
+PII-free document (`schema_version`, currently `1.3.0`) whose machine-checkable
 JSON Schema is published in [`schema/`](schema/). Every section carries an
 `exactness` label — `sampled`, `cumulative`, `scraped`, or `unavailable` — so a
 consumer never mistakes a cumulative total for a live rate.
@@ -1072,7 +1073,8 @@ pgbot inspect "$DATABASE_URL" --format=prometheus > /var/lib/node_exporter/pgbot
 mv /var/lib/node_exporter/pgbot.prom.$$ /var/lib/node_exporter/pgbot.prom   # atomic
 ```
 
-Under `--all-databases`, each database's series carry a `database="…"` label.
+Under `--all-databases`, each database's series carry a `database="…"` label;
+under `--all-instances`, `instance="…"` and `role="writer|reader"` as well.
 
 ## The findings catalogue
 

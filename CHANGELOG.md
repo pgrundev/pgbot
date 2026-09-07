@@ -3,11 +3,25 @@
 All notable changes to pgbot are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims for
 [Semantic Versioning](https://semver.org/). The `--json` contract is versioned
-separately by `model.SchemaVersion` (currently 1.2.0).
+separately by `model.SchemaVersion` (currently 1.3.0).
 
 ## [Unreleased]
 
 ### Added
+- **`pgbot inspect --all-instances` — every Aurora writer and reader behind one
+  endpoint (experimental)** (#23). An Aurora cluster endpoint stands for several
+  instances; this discovers the members with `aurora_replica_status()`, derives
+  each instance endpoint from the cluster endpoint's DNS name (custom domains
+  are followed through their CNAME), verifies each derived endpoint reached the
+  member it names with `aurora_db_instance_identifier()` before collecting, and
+  inspects every one through the existing fan-out — writer first, then readers,
+  composing with `--all-databases`. SQL and DNS only: no AWS credentials, CLI,
+  SDK, or API. An RDS Proxy endpoint, a non-RDS name, or an unreachable member
+  fails loudly rather than guessing; missing members mean partial coverage and
+  exit 3. Text output banners each target, JSON carries `server.instance` and
+  `server.instance_role`, SARIF/JUnit objects are prefixed `instance:<id>/`, and
+  Prometheus series gain `instance` and `role` labels. Needs validation on a
+  real cluster — please report the cluster endpoint shape if derivation fails.
 - **`$PGSERVICE` as a connection fallback** (#25). When no connection string
   is passed and neither `$DATABASE_URL` nor `$PGBOT_DATABASE_URL` is set,
   pgbot now checks `$PGSERVICE` too, so a
@@ -28,6 +42,11 @@ separately by `model.SchemaVersion` (currently 1.2.0).
   `eval "$(aws configure export-credentials --format env)"`. Access keys only
   ever go to the Mantle host for the configured region, and Bedrock requests
   never follow redirects.
+
+### Changed
+- `model.ServerInfo` gains `instance` and `instance_role` (additive). JSON
+  contract `SchemaVersion` → **1.3.0**; a 1.2.0 consumer still parses 1.3.0
+  output unchanged.
 
 ## [0.8.1] - 2026-09-06
 
