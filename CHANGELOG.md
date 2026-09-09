@@ -7,6 +7,19 @@ separately by `model.SchemaVersion` (currently 1.2.0).
 
 ## [Unreleased]
 
+### Changed
+- **Gauge strip in the default `inspect` view.** Four vital signs sit right
+  under the header — cache hit, lock wait (naming the culprit query when
+  sessions are blocked), rollbacks, and idle index bytes as a share of the
+  database — each a bar, a value and a one-word status driven by the finding
+  that grades the same signal. Signals pgbot could not measure render dim
+  with `—` and say why (`thin sample`, `window < 15m`, `not measurable`). The
+  GOOD bullet list becomes a compact `checked · queries · vacuum · …` line of
+  the subsystems that were collected and produced no finding. Score, the
+  CRITICAL/WARNING/NOTE bullets, `--full`, `--json`, MCP, SARIF and the HTML
+  report are unchanged. The footer's ask hint now reads
+  `pgbot ask "why is it slow?"`.
+
 ### Added
 - **`$PGSERVICE` as a connection fallback** (#25). When no connection string
   is passed and neither `$DATABASE_URL` nor `$PGBOT_DATABASE_URL` is set,

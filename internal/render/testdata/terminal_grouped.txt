@@ -1,12 +1,14 @@
 connected · app · postgres 17.10 · read-only · — window
 
+  cache hit  [████████████████████]  99.4%     ok
+  lock wait  [░░░░░░░░░░░░░░░░░░░░]  —         not measurable
+  rollbacks  [░░░░░░░░░░░░░░░░░░░░]  —         not measurable
+  idle idx   [░░░░░░░░░░░░░░░░░░░░]  —         not measurable
+
 Database health: 97/100
 
 WARNING
 ● 1 unused index
 
-GOOD
-● cache hit ratio 99.4%
-
 Details: pgbot inspect --full   ·   Machine-readable: --json
-Ask it: pgbot ask "what's wrong?"
+Ask it: pgbot ask "why is it slow?"

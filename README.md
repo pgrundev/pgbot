@@ -80,6 +80,14 @@ pinning and model/endpoint overrides: [the AI layer](#explain--optional-ai-layer
 ```
 connected · db.example.com · postgres 17.4 · read-only · 6h20m window
 
+  cache hit  [████████████████████]  99.4%     ok
+  lock wait  [████████████░░░░░░░░]  61.0%     query 4f2a
+  rollbacks  [██░░░░░░░░░░░░░░░░░░]  12.0%     watch
+  idle idx   [██████░░░░░░░░░░░░░░]  18.0 GiB  review
+
+checked · queries · vacuum · replication · checkpoints
+        · connections · settings · deadlocks
+
 Database health: 82/100
 
 CRITICAL
@@ -90,19 +98,16 @@ WARNING
 ● 3 unused indexes consume 18 GB
 ● connection usage reached 87%
 
-GOOD
-● cache hit ratio 99.4%
-● replication healthy
-● no deadlocks
-
 Details: pgbot inspect --full   ·   Machine-readable: --json
-Ask it: pgbot ask "what's wrong?"
+Ask it: pgbot ask "why is it slow?"
 ```
 
-The default report is a **graded read**: a health score, findings bucketed
-CRITICAL / WARNING / NOTE, then a GOOD list naming the healthy subsystems with
-their values (a tool that names what it verified reads like a colleague who
-looked, not an alarm). `pgbot inspect --full` adds a subsystem status board plus
+The default report is a **graded read**: a four-row gauge strip of vital signs
+(cache hit, lock wait with the culprit query, rollbacks, idle index bytes as a
+share of the database), a `checked` line naming the subsystems that came back
+clean (a tool that names what it verified reads like a colleague who looked,
+not an alarm), a health score, then findings bucketed CRITICAL / WARNING /
+NOTE. `pgbot inspect --full` adds a subsystem status board plus
 the section tables and per-finding caveats; focused commands (`indexes`,
 `queries`, `tables`, `vacuum`) each drill into one signal; `pgbot ask "…"` and
 `pgbot explain` put a plain-language AI reading on top of the same findings.

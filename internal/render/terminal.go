@@ -151,7 +151,8 @@ func Terminal(w io.Writer, c *model.Context, opts Options) error {
 			fmt.Fprintln(&b, st.dim("baseline: "+opts.BaselinePath))
 		}
 	} else {
-		// Graded, grouped summary: health score, CRITICAL/WARNING/NOTE, then GOOD.
+		// Graded, grouped summary: gauge strip, checked line, health score, then
+		// CRITICAL/WARNING/NOTE.
 		renderGrouped(&b, st, c, width)
 	}
 

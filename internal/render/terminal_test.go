@@ -37,9 +37,9 @@ func TestTerminal_groupedIsDefault(t *testing.T) {
 		t.Error("no-color output must contain no ANSI escapes")
 	}
 	out := buf.String()
-	// Grouped view: header, a health score, the warning group with the finding
-	// title bulleted, a GOOD list, and the --full pointer. No section tables.
-	for _, want := range []string{"connected", "postgres 17", "Database health:", "/100", "WARNING", "● 1 unused index", "GOOD", "--full"} {
+	// Grouped view: header, the gauge strip, a health score, the warning group
+	// with the finding title bulleted, and the --full pointer. No section tables.
+	for _, want := range []string{"connected", "postgres 17", "cache hit  [", "Database health:", "/100", "WARNING", "● 1 unused index", "--full"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("grouped output missing %q", want)
 		}
@@ -94,7 +94,7 @@ func TestFull_leadsWithStatusBoard(t *testing.T) {
 	}
 }
 
-func TestTerminal_cleanGroupedScoresHighAndListsGood(t *testing.T) {
+func TestTerminal_cleanGroupedScoresHighAndShowsGauges(t *testing.T) {
 	c := sampleContext()
 	c.Findings = nil
 	var buf bytes.Buffer
@@ -102,9 +102,9 @@ func TestTerminal_cleanGroupedScoresHighAndListsGood(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := buf.String()
-	// No findings → perfect score, no CRITICAL/WARNING groups, a GOOD list that
-	// names the healthy cache hit with its value.
-	for _, want := range []string{"100/100", "GOOD", "cache hit ratio 99.4%"} {
+	// No findings → perfect score, no CRITICAL/WARNING groups, and the gauge
+	// strip still names the healthy cache hit with its value.
+	for _, want := range []string{"100/100", "cache hit  [████████████████████]  99.4%     ok"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("clean grouped view missing %q", want)
 		}
@@ -115,8 +115,9 @@ func TestTerminal_cleanGroupedScoresHighAndListsGood(t *testing.T) {
 }
 
 // DoD 13: a schema-profile report states it is a schema check and makes no claim
-// about a running database's health — no GOOD list (it infers health from a
-// finding's absence), and the score is relabeled.
+// about a running database's health — no gauge strip or checked line (they infer
+// health from measurements and from a finding's absence), and the score is
+// relabeled.
 func TestTerminal_schemaProfileIsHonest(t *testing.T) {
 	c := sampleContext()
 	c.Profile = "schema"
@@ -130,8 +131,8 @@ func TestTerminal_schemaProfileIsHonest(t *testing.T) {
 			t.Errorf("schema-profile header missing %q", want)
 		}
 	}
-	if strings.Contains(out, "GOOD") {
-		t.Error("schema profile must not print a GOOD list (it never ran those checks)")
+	if strings.Contains(out, "cache hit  [") || strings.Contains(out, "checked ·") {
+		t.Error("schema profile must not print the gauge strip or the checked line (it never ran those checks)")
 	}
 	if strings.Contains(out, "Database health:") {
 		t.Error("schema profile must relabel the score, not claim overall database health")
