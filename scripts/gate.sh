@@ -36,13 +36,14 @@ command -v golangci-lint >/dev/null || {
 }
 golangci-lint run ./...
 CGO_ENABLED=0 go test ./...
-for goos in linux darwin; do
+# Every target .goreleaser.yaml ships, windows included.
+for goos in linux darwin windows; do
   for goarch in amd64 arm64; do
     CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -o /dev/null ./cmd/pgbot
   done
 done
 popd >/dev/null
-echo "✓ HEAD builds, vets, and tests clean (4 arches)"
+echo "✓ HEAD builds, vets, and tests clean (6 targets)"
 
 # (3) "Green" must mean CI, not just local — surface the latest main conclusion.
 if command -v gh >/dev/null 2>&1; then

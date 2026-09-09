@@ -12,8 +12,9 @@ scripts/gate.sh                # the real gate — builds HEAD, not your working
 ```
 
 `scripts/gate.sh` refuses a dirty tree, then builds and tests the committed HEAD
-in an isolated clone across four arches. Run it before pushing — a green
-working-tree `go test` can hide a partial commit that doesn't compile.
+in an isolated clone across every released target (linux, darwin and windows ×
+amd64, arm64). Run it before pushing — a green working-tree `go test` can hide a
+partial commit that doesn't compile.
 
 Integration tests run against a real database when `PGBOT_TEST_DSN` (a superuser
 DSN unlocks the doc-verify guard via `PGBOT_TEST_SUPERUSER_DSN`) is set:
