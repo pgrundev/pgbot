@@ -5,6 +5,7 @@
 *.db-shm
 pgrun_metrcis2.mp4
 /pgbot
+/pgbot.exe
 
 # npm packaging build output (assembled by npm/build.mjs)
 npm/staging/
