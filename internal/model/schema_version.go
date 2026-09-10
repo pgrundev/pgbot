@@ -10,4 +10,4 @@ package model
 //
 // 1.2.0: additive only — IndexStat gains columns/method/unique/primary (feeding
 // index/code correlation). A 1.1.0 consumer still parses 1.2.0 output.
-const SchemaVersion = "1.2.0"
+const SchemaVersion = "1.3.0"
