@@ -146,6 +146,21 @@ jobs:
           fi
           echo "clean: no EXPLAIN ANALYZE"
 
+  nix:
+    name: nix build
+    # vendorHash changes with every dependency bump, so this job is
+    # informational — a red nix build must not block an otherwise green PR.
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - run: nix build .#pgbot
+      # proves the ldflags version stamp reached the packaged binary
+      - run: ./result/bin/pgbot --version | grep -q 'pgbot version 0\.'
+
   build:
     name: build ${{ matrix.goos }}/${{ matrix.goarch }}
     runs-on: ubuntu-latest
