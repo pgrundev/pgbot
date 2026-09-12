@@ -77,14 +77,14 @@ nfpms:
 
 dockers:
   - image_templates:
-      - "{{ .Env.IMAGE_REPO }}:{{ .Version }}-amd64"
+      - "{{ .Env.IMAGE_REPO | tolower }}:{{ .Version }}-amd64"
     dockerfile: Dockerfile
     use: buildx
     build_flag_templates:
       - "--platform=linux/amd64"
     goarch: amd64
   - image_templates:
-      - "{{ .Env.IMAGE_REPO }}:{{ .Version }}-arm64"
+      - "{{ .Env.IMAGE_REPO | tolower }}:{{ .Version }}-arm64"
     dockerfile: Dockerfile
     use: buildx
     build_flag_templates:
@@ -95,14 +95,14 @@ dockers:
 # :latest) works on Apple Silicon / Graviton, not just amd64. The README lists
 # Docker as a first-class install method and uses the bare (:latest) tag.
 docker_manifests:
-  - name_template: "{{ .Env.IMAGE_REPO }}:{{ .Version }}"
+  - name_template: "{{ .Env.IMAGE_REPO | tolower }}:{{ .Version }}"
     image_templates:
-      - "{{ .Env.IMAGE_REPO }}:{{ .Version }}-amd64"
-      - "{{ .Env.IMAGE_REPO }}:{{ .Version }}-arm64"
-  - name_template: "{{ .Env.IMAGE_REPO }}:latest"
+      - "{{ .Env.IMAGE_REPO | tolower }}:{{ .Version }}-amd64"
+      - "{{ .Env.IMAGE_REPO | tolower }}:{{ .Version }}-arm64"
+  - name_template: "{{ .Env.IMAGE_REPO | tolower }}:latest"
     image_templates:
-      - "{{ .Env.IMAGE_REPO }}:{{ .Version }}-amd64"
-      - "{{ .Env.IMAGE_REPO }}:{{ .Version }}-arm64"
+      - "{{ .Env.IMAGE_REPO | tolower }}:{{ .Version }}-amd64"
+      - "{{ .Env.IMAGE_REPO | tolower }}:{{ .Version }}-arm64"
 
 # Homebrew formula, pushed to the pgrundev/homebrew-tap repo so
 # `brew install pgrundev/tap/pgbot` works (issue #8). The workflow's GITHUB_TOKEN
