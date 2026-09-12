@@ -186,7 +186,7 @@ jobs:
           curl -fsSL "$base/checksums.txt" -o checksums.txt
           curl -fsSL "$base/checksums.txt.cosign.bundle" -o checksums.txt.cosign.bundle
           cosign verify-blob --bundle checksums.txt.cosign.bundle \
-            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/\.github/workflows/release\.yml@" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@${GITHUB_REF}" \
             --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
             checksums.txt
           echo "published cosign bundle verifies ✓"
