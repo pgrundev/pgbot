@@ -10,4 +10,8 @@ package model
 //
 // 1.2.0: additive only — IndexStat gains columns/method/unique/primary (feeding
 // index/code correlation). A 1.1.0 consumer still parses 1.2.0 output.
-const SchemaVersion = "1.2.0"
+// 1.3.0: additive only — Context gains io_stats (pg_stat_io rates and
+// latencies, PG16+). A 1.2.0 consumer still parses 1.3.0 output.
+// 1.4.0: additive only — PartitionRollup gains hot/big partition skew fields;
+// WaitStudy gains io (pg_stat_io over the sampling window).
+const SchemaVersion = "1.4.0"

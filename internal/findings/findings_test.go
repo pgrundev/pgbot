@@ -1,6 +1,7 @@
 package findings
 
 import (
+	"strings"
 	"testing"
 	"unicode/utf8"
 
@@ -471,5 +472,223 @@ func TestTruncate_runeSafe(t *testing.T) {
 	// A string of exactly n runes is returned whole.
 	if got := truncate("abcd", 4); got != "abcd" {
 		t.Errorf("exactly n runes must be returned whole, got %q", got)
+	}
+}
+
+func TestIOReadLatencyHigh(t *testing.T) {
+	mk := func(lat float64, reads int64, timing bool) *model.Context {
+		return &model.Context{
+			Window: model.Window{SampleSeconds: 5},
+			IOStats: &model.IOStats{
+				Section: model.Section{Exactness: model.ExactnessSampled}, TrackIOTiming: timing,
+				ReadLatencyMS: ptr(lat), ReadsInWindow: reads, ReadsPerSec: ptr(float64(reads) / 5),
+				Rows: []model.IOStatRow{{BackendType: "client backend", Object: "relation", Context: "normal", ReadsPerSec: 100, ReadLatencyMS: ptr(lat)}},
+			},
+		}
+	}
+	cases := []struct {
+		name    string
+		c       *model.Context
+		wantSev string // "" = must not fire
+	}{
+		{"warn at 7ms", mk(7, 2000, true), model.SeverityWarn},
+		{"critical at 25ms", mk(25, 2000, true), model.SeverityCritical},
+		{"fast reads", mk(0.2, 2000, true), ""},
+		{"too few reads", mk(9, 40, true), ""},
+		{"no io timing", mk(9, 2000, false), ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := has(Compute(tc.c), "io_read_latency_high")
+			if tc.wantSev == "" {
+				if f != nil {
+					t.Fatalf("must not fire, got %+v", f)
+				}
+				return
+			}
+			if f == nil || f.Severity != tc.wantSev {
+				t.Fatalf("want %s, got %+v", tc.wantSev, f)
+			}
+			if !contains(strings.Join(f.Evidence, "\n"), "client backend") {
+				t.Errorf("evidence should name the heaviest reader: %v", f.Evidence)
+			}
+		})
+	}
+}
+
+func TestConfigSanity_pg18AndPlanCache(t *testing.T) {
+	params := func(kv ...string) *model.Settings {
+		m := map[string]string{}
+		for i := 0; i+1 < len(kv); i += 2 {
+			m[kv[i]] = kv[i+1]
+		}
+		return &model.Settings{Params: m}
+	}
+	// effective_io_concurrency=1 on a managed provider → info; off-cloud → silent.
+	c := &model.Context{Server: model.ServerInfo{Provider: "rds"}, Settings: params("effective_io_concurrency", "1")}
+	if f := has(Compute(c), "io_concurrency_low"); f == nil || f.Severity != model.SeverityInfo {
+		t.Fatalf("eic=1 on rds should fire info, got %+v", f)
+	}
+	if has(Compute(&model.Context{Settings: params("effective_io_concurrency", "1")}), "io_concurrency_low") != nil {
+		t.Error("unknown provider must not fire")
+	}
+	if has(Compute(&model.Context{Server: model.ServerInfo{Provider: "rds"}, Settings: params("effective_io_concurrency", "16")}), "io_concurrency_low") != nil {
+		t.Error("eic=16 must not fire")
+	}
+	// plan_cache_mode
+	if f := has(Compute(&model.Context{Settings: params("plan_cache_mode", "force_generic_plan")}), "plan_cache_mode_forced"); f == nil || !contains(f.Title, "force_generic_plan") {
+		t.Fatalf("forced plan cache mode should fire and name the mode, got %+v", f)
+	}
+	if has(Compute(&model.Context{Settings: params("plan_cache_mode", "auto")}), "plan_cache_mode_forced") != nil {
+		t.Error("auto must not fire")
+	}
+	// max_slot_wal_keep_size=-1 only matters with slots present.
+	slots := &model.Replication{Slots: []model.ReplicationSlot{{Name: "s1", Active: true}}}
+	if has(Compute(&model.Context{Settings: params("max_slot_wal_keep_size", "-1"), Replication: slots}), "slot_wal_keep_unbounded") == nil {
+		t.Error("-1 with a slot should fire")
+	}
+	if has(Compute(&model.Context{Settings: params("max_slot_wal_keep_size", "-1"), Replication: &model.Replication{}}), "slot_wal_keep_unbounded") != nil {
+		t.Error("no slots must not fire")
+	}
+	if has(Compute(&model.Context{Settings: params("max_slot_wal_keep_size", "50GB"), Replication: slots}), "slot_wal_keep_unbounded") != nil {
+		t.Error("bounded must not fire")
+	}
+}
+
+func TestWorkMemOvercommit_memoryEnvelope(t *testing.T) {
+	base := map[string]string{"work_mem": "64MB", "max_connections": "100", "effective_cache_size": "12GB", "shared_buffers": "4GB"}
+	// 4GB + 64MB×2×100 = 16.5GB > 12GB → fires only because of hash_mem_multiplier.
+	with := map[string]string{}
+	for k, v := range base {
+		with[k] = v
+	}
+	with["hash_mem_multiplier"] = "2"
+	f := has(Compute(&model.Context{Settings: &model.Settings{Params: with}}), "work_mem_overcommit")
+	if f == nil || !contains(f.Title, "shared_buffers") {
+		t.Fatalf("envelope over effective_cache_size should fire and mention shared_buffers, got %+v", f)
+	}
+	if !contains(strings.Join(f.Evidence, "\n"), "hash_mem_multiplier 2") {
+		t.Errorf("evidence should show the multiplier: %v", f.Evidence)
+	}
+	// 4GB + 64MB×1×100 = 10.4GB < 12GB → silent without the multiplier.
+	if has(Compute(&model.Context{Settings: &model.Settings{Params: base}}), "work_mem_overcommit") != nil {
+		t.Error("under the envelope must not fire")
+	}
+}
+
+func TestPoolSizing(t *testing.T) {
+	day := int64(86_400)
+	c := &model.Context{
+		Window:  model.Window{WindowAgeSeconds: &day},
+		Queries: &model.Queries{Enabled: true, TotalExecMS: 4 * 86_400 * 1000}, // 4 backend-days of exec time in a day
+		Limits:  &model.Limits{ConnectionsUsed: 20, ConnectionsMax: 500},
+	}
+	busy, pool, ok := PoolSizing(c)
+	if !ok || busy != 4 || pool != 12 {
+		t.Fatalf("want 4 busy → pool 12, got %v %v %v", busy, pool, ok)
+	}
+	if f := has(Compute(c), "connections_overprovisioned"); f == nil || !contains(f.Remediation, "around 12") {
+		t.Errorf("over-provisioning remediation should carry the pool size, got %+v", f)
+	}
+	// Short window → no estimate; pgss absent → no estimate.
+	short := int64(600)
+	if _, _, ok := PoolSizing(&model.Context{Window: model.Window{WindowAgeSeconds: &short}, Queries: c.Queries}); ok {
+		t.Error("10-minute window must not estimate")
+	}
+	if _, _, ok := PoolSizing(&model.Context{Window: model.Window{WindowAgeSeconds: &day}}); ok {
+		t.Error("no pgss must not estimate")
+	}
+}
+
+func TestPartitionSkew(t *testing.T) {
+	warm := int64(86_400)
+	mk := func(p model.PartitionRollup) *model.Context {
+		return &model.Context{Window: model.Window{WindowAgeSeconds: &warm}, Tables: &model.Tables{Partitioned: []model.PartitionRollup{p}}}
+	}
+	// 8 partitions, 8000 scans → avg 1000; hot leaf 6000 = 6×.
+	hot := model.PartitionRollup{Schema: "public", Name: "events", Partitions: 8, SeqScans: 4000, IndexScans: 4000, LiveTuples: 80_000, HotPartition: "events_p3", HotScans: 6000, BigPartition: "events_p1", BigRows: 12_000}
+	f := has(Compute(mk(hot)), "partition_skew")
+	if f == nil || !contains(strings.Join(f.Evidence, "\n"), "events_p3 takes 6×") {
+		t.Fatalf("6× hot partition should fire with the leaf named, got %+v", f)
+	}
+	if f.Objects[0] != "public.events" {
+		t.Errorf("object should be the parent, got %v", f.Objects)
+	}
+	// Rows-only skew: 8 partitions, 800k rows → avg 100k; big leaf 500k = 5×.
+	rows := model.PartitionRollup{Schema: "public", Name: "tenants", Partitions: 8, SeqScans: 10, IndexScans: 10, LiveTuples: 800_000, HotPartition: "t_p0", HotScans: 5, BigPartition: "t_p7", BigRows: 500_000}
+	if f := has(Compute(mk(rows)), "partition_skew"); f == nil || !contains(f.Evidence[0], "t_p7 holds 5×") {
+		t.Errorf("row skew should fire, got %+v", f)
+	}
+	// Even spread → silent; too few partitions → silent; cold window → silent.
+	even := hot
+	even.HotScans, even.BigRows = 1500, 15_000
+	if has(Compute(mk(even)), "partition_skew") != nil {
+		t.Error("1.5× must not fire")
+	}
+	few := hot
+	few.Partitions = 2
+	if has(Compute(mk(few)), "partition_skew") != nil {
+		t.Error("2 partitions must not fire")
+	}
+	cold := int64(60)
+	c := mk(hot)
+	c.Window.WindowAgeSeconds = &cold
+	if has(Compute(c), "partition_skew") != nil {
+		t.Error("cold window must not fire")
+	}
+}
+
+func TestAutovacuumTableTuning(t *testing.T) {
+	big := model.TableStat{Schema: "public", Name: "orders", LiveTuples: 50_000_000, DeadTuples: 2_000_000, Updates: 1}
+	c := &model.Context{Tables: &model.Tables{Top: []model.TableStat{big}}}
+	f := has(Compute(c), "autovacuum_table_tuning")
+	if f == nil || f.Severity != model.SeverityInfo {
+		t.Fatalf("50M-row table on the default scale factor should fire info, got %+v", f)
+	}
+	// Default 50 + 0.2 × 50M = 10,000,050 → "10.0M"; suggested 1000 + 0.02 × 50M = 1,001,000.
+	if !contains(f.Evidence[0], "waits for 10.0M dead rows") || !contains(f.Evidence[0], "suggested 1.0M") {
+		t.Errorf("evidence should show current and suggested trigger, got %q", f.Evidence[0])
+	}
+	if !contains(f.Remediation, "autovacuum_vacuum_scale_factor = 0.02") {
+		t.Errorf("remediation should carry the ALTER TABLE, got %q", f.Remediation)
+	}
+	if !TuningIDs["autovacuum_table_tuning"] {
+		t.Error("must be surfaced by pgbot tune")
+	}
+	cases := map[string]model.TableStat{
+		"already overridden": func() model.TableStat { x := big; s := 0.02; x.VacuumScaleOverride = &s; return x }(),
+		"small table":        func() model.TableStat { x := big; x.LiveTuples = 500_000; return x }(),
+		"append-only":        func() model.TableStat { x := big; x.DeadTuples, x.Updates = 0, 0; return x }(),
+		"autovacuum off":     func() model.TableStat { x := big; x.AutovacuumDisabled = true; return x }(),
+	}
+	for name, tbl := range cases {
+		if has(Compute(&model.Context{Tables: &model.Tables{Top: []model.TableStat{tbl}}}), "autovacuum_table_tuning") != nil {
+			t.Errorf("%s must not fire", name)
+		}
+	}
+	// Global scale already lowered → silent.
+	low := &model.Context{Tables: c.Tables, Settings: &model.Settings{Params: map[string]string{"autovacuum_vacuum_scale_factor": "0.05"}}}
+	if has(Compute(low), "autovacuum_table_tuning") != nil {
+		t.Error("global scale 0.05 must not fire")
+	}
+}
+
+func TestWaitIOBound_ioStatsVerdict(t *testing.T) {
+	prof := &model.WaitProfile{Available: true, Samples: 200, Buckets: []model.WaitBucket{{Type: "IO", Share: 0.7, Events: []model.WaitEvent{{Event: "DataFileRead", Share: 0.6}}}}}
+	mk := func(lat float64) *model.Context {
+		return &model.Context{WaitProfile: prof, IOStats: &model.IOStats{Section: model.Section{Exactness: model.ExactnessSampled}, TrackIOTiming: true, ReadLatencyMS: ptr(lat), ReadsInWindow: 5000}}
+	}
+	slow := has(Compute(mk(4.2)), "wait_io_bound")
+	if slow == nil || !contains(strings.Join(slow.Evidence, "\n"), "the device served them") || !contains(slow.Remediation, "cut blocks read first") {
+		t.Fatalf("device-latency verdict expected, got %+v", slow)
+	}
+	fast := has(Compute(mk(0.05)), "wait_io_bound")
+	if fast == nil || !contains(strings.Join(fast.Evidence, "\n"), "kernel page cache") || !contains(fast.Remediation, "more cache or faster storage would not change this") {
+		t.Fatalf("page-cache verdict expected, got %+v", fast)
+	}
+	// Without io_stats the original evidence and remediation stand.
+	plain := has(Compute(&model.Context{WaitProfile: prof}), "wait_io_bound")
+	if plain == nil || len(plain.Evidence) != 1 {
+		t.Fatalf("no io_stats → single evidence line, got %+v", plain)
 	}
 }

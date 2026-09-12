@@ -47,6 +47,7 @@ type Context struct {
 	Indexes     *Indexes       `json:"indexes,omitempty"`
 	WAL         *WAL           `json:"wal,omitempty"`
 	IO          *IO            `json:"io,omitempty"`
+	IOStats     *IOStats       `json:"io_stats,omitempty"` // pg_stat_io per backend/context, rate + latency (PG16+)
 	Replication *Replication   `json:"replication,omitempty"`
 	Settings    *Settings      `json:"settings,omitempty"`
 	Limits      *Limits        `json:"limits,omitempty"`
@@ -329,6 +330,12 @@ type PartitionRollup struct {
 	LiveTuples int64  `json:"live_tuples"`
 	SeqScans   int64  `json:"seq_scans"`
 	IndexScans int64  `json:"index_scans"`
+	// Skew evidence (1.4.0): the leaf taking the most scans and the leaf holding
+	// the most rows. Cumulative counters — a newly attached partition looks cold.
+	HotPartition string `json:"hot_partition,omitempty"`
+	HotScans     int64  `json:"hot_scans,omitempty"`
+	BigPartition string `json:"big_partition,omitempty"`
+	BigRows      int64  `json:"big_rows,omitempty"`
 }
 
 type TableStat struct {
@@ -419,6 +426,36 @@ type IO struct {
 	CheckpointsReq     int64    `json:"checkpoints_requested"`
 	BuffersWrittenPerS *float64 `json:"buffers_written_per_sec,omitempty"`
 	BackendFsyncs      int64    `json:"backend_fsyncs"`
+}
+
+// IOStats is pg_stat_io (PG16+), double-sampled: physical reads/writes/fsyncs
+// per second by backend_type × object × context, with the mean per-op latency
+// when track_io_timing is on. Reads here are PostgreSQL-level (a miss in
+// shared_buffers) — the kernel page cache may still have served them, so the
+// latency column, not the read count, says whether storage is the bottleneck.
+type IOStats struct {
+	Section
+	TrackIOTiming  bool        `json:"track_io_timing"`         // latencies are only meaningful when true
+	ReadsPerSec    *float64    `json:"reads_per_sec,omitempty"` // all backends, all contexts
+	WritesPerSec   *float64    `json:"writes_per_sec,omitempty"`
+	FsyncsPerSec   *float64    `json:"fsyncs_per_sec,omitempty"`
+	ReadLatencyMS  *float64    `json:"read_latency_ms,omitempty"` // mean ms per read in the window; nil without track_io_timing or reads
+	WriteLatencyMS *float64    `json:"write_latency_ms,omitempty"`
+	FsyncLatencyMS *float64    `json:"fsync_latency_ms,omitempty"`
+	ReadsInWindow  int64       `json:"reads_in_window"` // the latency's denominator — judge it before trusting the mean
+	Rows           []IOStatRow `json:"rows,omitempty"`  // per backend_type × object × context, only rows with activity in the window
+}
+
+// IOStatRow is one pg_stat_io row's activity over the sample window.
+type IOStatRow struct {
+	BackendType    string   `json:"backend_type"`
+	Object         string   `json:"object"`
+	Context        string   `json:"context"`
+	ReadsPerSec    float64  `json:"reads_per_sec"`
+	WritesPerSec   float64  `json:"writes_per_sec"`
+	FsyncsPerSec   float64  `json:"fsyncs_per_sec"`
+	ReadLatencyMS  *float64 `json:"read_latency_ms,omitempty"`
+	WriteLatencyMS *float64 `json:"write_latency_ms,omitempty"`
 }
 
 // Replication is pg_stat_replication (primary) / pg_stat_wal_receiver (replica).

@@ -423,6 +423,43 @@ var catalog = map[string]Meta{
 		Scope:   "infra",
 		Related: []string{"work_mem_low", "connections_overprovisioned"},
 	},
+	"partition_skew": {
+		Severity: "info", CriticalWhen: "",
+		Dimension: "throughput", ObjectClass: "relation",
+		Scope:   "workload",
+		Related: []string{"partition_seq_scan_heavy", "autovacuum_table_tuning"},
+	},
+	"autovacuum_table_tuning": {
+		Severity: "info", CriticalWhen: "",
+		Dimension: "storage", ObjectClass: "relation",
+		Scope:   "workload",
+		Related: []string{"autovacuum_starved", "table_bloat", "txid_wraparound"},
+	},
+	"io_read_latency_high": {
+		Severity: "warn", CriticalWhen: "mean physical read latency ≥ 20 ms",
+		Dimension: "latency", ObjectClass: "cluster",
+		Scope:    "workload",
+		Requires: []string{"PG16+", "track_io_timing"},
+		Related:  []string{"wait_io_bound", "low_cache_hit", "seq_scan_heavy", "io_concurrency_low"},
+	},
+	"io_concurrency_low": {
+		Severity: "info", CriticalWhen: "",
+		Dimension: "latency", ObjectClass: "setting",
+		Scope:   "infra",
+		Related: []string{"random_page_cost_high", "io_read_latency_high", "wait_io_bound"},
+	},
+	"plan_cache_mode_forced": {
+		Severity: "info", CriticalWhen: "",
+		Dimension: "latency", ObjectClass: "setting",
+		Scope:   "infra",
+		Related: []string{"query_slowdown", "stale_statistics"},
+	},
+	"slot_wal_keep_unbounded": {
+		Severity: "info", CriticalWhen: "",
+		Dimension: "risk", ObjectClass: "setting",
+		Scope:   "infra",
+		Related: []string{"replication_slot_inactive"},
+	},
 	"statement_timeout_unset": {
 		Severity: "info", CriticalWhen: "",
 		Dimension: "risk", ObjectClass: "setting",
@@ -517,6 +554,12 @@ func ObjectClass(object string) string {
 // README.md), grouped by dimension. Kept terse — the page has the depth.
 var summaries = map[string]string{
 	"blocking_chains":              "one session is blocked waiting on locks held by another",
+	"partition_skew":               "one partition takes most of the scans or rows — the partition key has a hot value",
+	"autovacuum_table_tuning":      "a large write-active table on the global 20% scale factor — millions of dead rows before autovacuum starts",
+	"io_read_latency_high":         "physical reads take milliseconds each — the working set is on the device, not in memory",
+	"io_concurrency_low":           "effective_io_concurrency ≤ 1 on SSD-backed storage — scans read one block at a time",
+	"plan_cache_mode_forced":       "plan_cache_mode pinned cluster-wide — prepared statements can't switch generic/custom plans",
+	"slot_wal_keep_unbounded":      "max_slot_wal_keep_size = -1 with replication slots present — a stalled consumer can fill the disk",
 	"index_invalid":                "a failed CREATE INDEX CONCURRENTLY left an invalid index — critical if it's still maintained on writes, warn if it's failed-build debris",
 	"unused_indexes":               "indexes with zero scans — storage and write cost, no reads served",
 	"table_bloat":                  "dead tuples make a table far larger on disk than its live rows",

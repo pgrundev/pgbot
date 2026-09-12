@@ -96,6 +96,7 @@ var registry = []Collector{
 	schemaCollector{},
 	walCollector{},
 	ioCollector{},
+	iostatsCollector{},
 	replicationCollector{},
 	settingsCollector{},
 	limitsCollector{},
