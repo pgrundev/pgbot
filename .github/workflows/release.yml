@@ -41,6 +41,9 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Container image goes to the releasing repo's own ghcr namespace, so a
+          # fork's release doesn't try (and fail) to push to ghcr.io/pgrundev.
+          IMAGE_REPO: ghcr.io/${{ github.repository }}
           # Write access to the separate pgrundev/homebrew-tap repo — EITHER the
           # private half of a write deploy key on that repo (preferred) OR a
           # fine-grained PAT scoped to it (Contents: write). Both are passed (empty
@@ -116,6 +119,9 @@ jobs:
   brew-smoke:
     needs: goreleaser
     name: brew install pgrundev/tap/pgbot
+    # The tap is pgrundev's; a fork has no credential for it by design, so the
+    # loud "formula NOT published" failure below is only meaningful upstream.
+    if: github.repository == 'pgrundev/pgbot'
     runs-on: macos-latest
     env:
       HAS_TAP_CRED: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY != '' || secrets.HOMEBREW_TAP_TOKEN != '' }}
