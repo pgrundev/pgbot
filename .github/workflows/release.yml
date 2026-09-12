@@ -159,8 +159,9 @@ jobs:
       - name: anonymous docker run --version
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
+          IMAGE="ghcr.io/$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
           docker logout ghcr.io || true   # ensure the pull is anonymous
-          out="$(docker run --rm ghcr.io/pgrundev/pgbot:"$VERSION" --version)"
+          out="$(docker run --rm "$IMAGE":"$VERSION" --version)"
           echo "$out"
           case "$out" in
             "pgbot version"*) echo "image is public and runs ✓" ;;
@@ -181,11 +182,11 @@ jobs:
       - name: cosign verify-blob --bundle
         run: |
           VERSION="${GITHUB_REF_NAME}"
-          base="https://github.com/pgrundev/pgbot/releases/download/${VERSION}"
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${VERSION}"
           curl -fsSL "$base/checksums.txt" -o checksums.txt
           curl -fsSL "$base/checksums.txt.cosign.bundle" -o checksums.txt.cosign.bundle
           cosign verify-blob --bundle checksums.txt.cosign.bundle \
-            --certificate-identity-regexp '^https://github.com/pgrundev/pgbot/\.github/workflows/release\.yml@' \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/\.github/workflows/release\.yml@" \
             --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
             checksums.txt
           echo "published cosign bundle verifies ✓"
