@@ -423,6 +423,18 @@ var catalog = map[string]Meta{
 		Scope:   "infra",
 		Related: []string{"work_mem_low", "connections_overprovisioned"},
 	},
+	"partition_skew": {
+		Severity: "info", CriticalWhen: "",
+		Dimension: "throughput", ObjectClass: "relation",
+		Scope:   "workload",
+		Related: []string{"partition_seq_scan_heavy", "autovacuum_table_tuning"},
+	},
+	"autovacuum_table_tuning": {
+		Severity: "info", CriticalWhen: "",
+		Dimension: "storage", ObjectClass: "relation",
+		Scope:   "workload",
+		Related: []string{"autovacuum_starved", "table_bloat", "txid_wraparound"},
+	},
 	"io_read_latency_high": {
 		Severity: "warn", CriticalWhen: "mean physical read latency ≥ 20 ms",
 		Dimension: "latency", ObjectClass: "cluster",
@@ -542,6 +554,8 @@ func ObjectClass(object string) string {
 // README.md), grouped by dimension. Kept terse — the page has the depth.
 var summaries = map[string]string{
 	"blocking_chains":              "one session is blocked waiting on locks held by another",
+	"partition_skew":               "one partition takes most of the scans or rows — the partition key has a hot value",
+	"autovacuum_table_tuning":      "a large write-active table on the global 20% scale factor — millions of dead rows before autovacuum starts",
 	"io_read_latency_high":         "physical reads take milliseconds each — the working set is on the device, not in memory",
 	"io_concurrency_low":           "effective_io_concurrency ≤ 1 on SSD-backed storage — scans read one block at a time",
 	"plan_cache_mode_forced":       "plan_cache_mode pinned cluster-wide — prepared statements can't switch generic/custom plans",

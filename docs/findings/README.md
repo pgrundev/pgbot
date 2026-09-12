@@ -52,6 +52,7 @@ Disk wasted by bloat, dead tuples, and indexes that earn nothing.
 - **[table_bloat](table_bloat.md)** · Warn — dead tuples make a table far larger on disk than its live rows
 - **[unused_indexes](unused_indexes.md)** · Warn — indexes with zero scans — storage and write cost, no reads served
 - **[vacuum_horizon_blocked](vacuum_horizon_blocked.md)** · Warn — something pins the xmin horizon so vacuum can't reclaim
+- **[autovacuum_table_tuning](autovacuum_table_tuning.md)** · Info — a large write-active table on the global 20% scale factor — millions of dead rows before autovacuum starts
 - **[redundant_indexes](redundant_indexes.md)** · Info — an index whose columns are a leading prefix of another
 
 ## Latency
@@ -85,6 +86,7 @@ Whole-database capacity lost to waits, cache misses, and write amplification.
 - **[work_mem_low](work_mem_low.md)** · Warn — queries spill sorts/hashes to temp files — work_mem too small
 - **[autovacuum_long_running](autovacuum_long_running.md)** · Info — an autovacuum worker has been running over an hour
 - **[io_timing_off](io_timing_off.md)** · Info — track_io_timing off, so per-query IO time is unavailable
+- **[partition_skew](partition_skew.md)** · Info — one partition takes most of the scans or rows — the partition key has a hot value
 - **[pgaudit_double_logging](pgaudit_double_logging.md)** · Info — pgaudit and log_statement=all record every statement twice — duplicate log volume
 
 ## Cost & visibility

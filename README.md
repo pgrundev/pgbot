@@ -29,7 +29,7 @@
   <a href="docs/providers.md">Provider notes</a>
 </p>
 
-> **Status: beta.** The `--json` contract is versioned (currently `1.3.0`, JSON
+> **Status: beta.** The `--json` contract is versioned (currently `1.4.0`, JSON
 > Schema published in [`schema/`](schema/)) and breaking changes to it are
 > treated as breaking changes to the tool. The human-readable report is **not**
 > a stable interface — parse `--json`, not the terminal output.
@@ -806,13 +806,13 @@ rates; the rest are point-in-time reads trended against the baseline.
 ## The `--json` contract
 
 `--json` (and `--format=json`) is the interface to build on — a versioned,
-PII-free document (`schema_version`, currently `1.3.0`) whose machine-checkable
+PII-free document (`schema_version`, currently `1.4.0`) whose machine-checkable
 JSON Schema is published in [`schema/`](schema/). Every section carries an
 `exactness` label — `sampled`, `cumulative`, `scraped`, or `unavailable` — so a
 consumer never mistakes a cumulative total for a live rate.
 
 Versioning policy: additive fields bump the minor version and are not breaking —
-a `1.2.0` consumer parses `1.3.0` output unchanged; breaking changes to the
+a `1.3.0` consumer parses `1.4.0` output unchanged; breaking changes to the
 contract are treated as breaking changes to the tool. `pgbot advise --json` has
 its own schema
 ([`schema/pgbot-advise-1.0.0.json`](schema/pgbot-advise-1.0.0.json)).

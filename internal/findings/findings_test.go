@@ -599,3 +599,96 @@ func TestPoolSizing(t *testing.T) {
 		t.Error("no pgss must not estimate")
 	}
 }
+
+func TestPartitionSkew(t *testing.T) {
+	warm := int64(86_400)
+	mk := func(p model.PartitionRollup) *model.Context {
+		return &model.Context{Window: model.Window{WindowAgeSeconds: &warm}, Tables: &model.Tables{Partitioned: []model.PartitionRollup{p}}}
+	}
+	// 8 partitions, 8000 scans → avg 1000; hot leaf 6000 = 6×.
+	hot := model.PartitionRollup{Schema: "public", Name: "events", Partitions: 8, SeqScans: 4000, IndexScans: 4000, LiveTuples: 80_000, HotPartition: "events_p3", HotScans: 6000, BigPartition: "events_p1", BigRows: 12_000}
+	f := has(Compute(mk(hot)), "partition_skew")
+	if f == nil || !contains(strings.Join(f.Evidence, "\n"), "events_p3 takes 6×") {
+		t.Fatalf("6× hot partition should fire with the leaf named, got %+v", f)
+	}
+	if f.Objects[0] != "public.events" {
+		t.Errorf("object should be the parent, got %v", f.Objects)
+	}
+	// Rows-only skew: 8 partitions, 800k rows → avg 100k; big leaf 500k = 5×.
+	rows := model.PartitionRollup{Schema: "public", Name: "tenants", Partitions: 8, SeqScans: 10, IndexScans: 10, LiveTuples: 800_000, HotPartition: "t_p0", HotScans: 5, BigPartition: "t_p7", BigRows: 500_000}
+	if f := has(Compute(mk(rows)), "partition_skew"); f == nil || !contains(f.Evidence[0], "t_p7 holds 5×") {
+		t.Errorf("row skew should fire, got %+v", f)
+	}
+	// Even spread → silent; too few partitions → silent; cold window → silent.
+	even := hot
+	even.HotScans, even.BigRows = 1500, 15_000
+	if has(Compute(mk(even)), "partition_skew") != nil {
+		t.Error("1.5× must not fire")
+	}
+	few := hot
+	few.Partitions = 2
+	if has(Compute(mk(few)), "partition_skew") != nil {
+		t.Error("2 partitions must not fire")
+	}
+	cold := int64(60)
+	c := mk(hot)
+	c.Window.WindowAgeSeconds = &cold
+	if has(Compute(c), "partition_skew") != nil {
+		t.Error("cold window must not fire")
+	}
+}
+
+func TestAutovacuumTableTuning(t *testing.T) {
+	big := model.TableStat{Schema: "public", Name: "orders", LiveTuples: 50_000_000, DeadTuples: 2_000_000, Updates: 1}
+	c := &model.Context{Tables: &model.Tables{Top: []model.TableStat{big}}}
+	f := has(Compute(c), "autovacuum_table_tuning")
+	if f == nil || f.Severity != model.SeverityInfo {
+		t.Fatalf("50M-row table on the default scale factor should fire info, got %+v", f)
+	}
+	// Default 50 + 0.2 × 50M = 10,000,050 → "10.0M"; suggested 1000 + 0.02 × 50M = 1,001,000.
+	if !contains(f.Evidence[0], "waits for 10.0M dead rows") || !contains(f.Evidence[0], "suggested 1.0M") {
+		t.Errorf("evidence should show current and suggested trigger, got %q", f.Evidence[0])
+	}
+	if !contains(f.Remediation, "autovacuum_vacuum_scale_factor = 0.02") {
+		t.Errorf("remediation should carry the ALTER TABLE, got %q", f.Remediation)
+	}
+	if !TuningIDs["autovacuum_table_tuning"] {
+		t.Error("must be surfaced by pgbot tune")
+	}
+	cases := map[string]model.TableStat{
+		"already overridden": func() model.TableStat { x := big; s := 0.02; x.VacuumScaleOverride = &s; return x }(),
+		"small table":        func() model.TableStat { x := big; x.LiveTuples = 500_000; return x }(),
+		"append-only":        func() model.TableStat { x := big; x.DeadTuples, x.Updates = 0, 0; return x }(),
+		"autovacuum off":     func() model.TableStat { x := big; x.AutovacuumDisabled = true; return x }(),
+	}
+	for name, tbl := range cases {
+		if has(Compute(&model.Context{Tables: &model.Tables{Top: []model.TableStat{tbl}}}), "autovacuum_table_tuning") != nil {
+			t.Errorf("%s must not fire", name)
+		}
+	}
+	// Global scale already lowered → silent.
+	low := &model.Context{Tables: c.Tables, Settings: &model.Settings{Params: map[string]string{"autovacuum_vacuum_scale_factor": "0.05"}}}
+	if has(Compute(low), "autovacuum_table_tuning") != nil {
+		t.Error("global scale 0.05 must not fire")
+	}
+}
+
+func TestWaitIOBound_ioStatsVerdict(t *testing.T) {
+	prof := &model.WaitProfile{Available: true, Samples: 200, Buckets: []model.WaitBucket{{Type: "IO", Share: 0.7, Events: []model.WaitEvent{{Event: "DataFileRead", Share: 0.6}}}}}
+	mk := func(lat float64) *model.Context {
+		return &model.Context{WaitProfile: prof, IOStats: &model.IOStats{Section: model.Section{Exactness: model.ExactnessSampled}, TrackIOTiming: true, ReadLatencyMS: ptr(lat), ReadsInWindow: 5000}}
+	}
+	slow := has(Compute(mk(4.2)), "wait_io_bound")
+	if slow == nil || !contains(strings.Join(slow.Evidence, "\n"), "the device served them") || !contains(slow.Remediation, "cut blocks read first") {
+		t.Fatalf("device-latency verdict expected, got %+v", slow)
+	}
+	fast := has(Compute(mk(0.05)), "wait_io_bound")
+	if fast == nil || !contains(strings.Join(fast.Evidence, "\n"), "kernel page cache") || !contains(fast.Remediation, "more cache or faster storage would not change this") {
+		t.Fatalf("page-cache verdict expected, got %+v", fast)
+	}
+	// Without io_stats the original evidence and remediation stand.
+	plain := has(Compute(&model.Context{WaitProfile: prof}), "wait_io_bound")
+	if plain == nil || len(plain.Evidence) != 1 {
+		t.Fatalf("no io_stats → single evidence line, got %+v", plain)
+	}
+}

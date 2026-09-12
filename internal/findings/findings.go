@@ -101,6 +101,21 @@ const (
 	// poolSizing: the cumulative window must be at least this old before the
 	// average-concurrency estimate is trustworthy.
 	poolSizingMinWindowS = 3600
+
+	// partition_skew: the hottest leaf takes ≥ this multiple of the per-partition
+	// average scan count (or holds that multiple of the average row count).
+	partitionSkewFactor   = 4.0
+	partitionSkewMinParts = 4
+	partitionSkewMinScans = 1000
+	partitionSkewMinRows  = 100_000
+
+	// autovacuum_table_tuning: a table this large on the global 20% scale factor
+	// waits for this many dead rows before autovacuum starts — the per-table
+	// override the docs recommend for large, write-active relations.
+	avTuneMinRows        = 1_000_000
+	avTuneMinScale       = 0.1  // only flag when the effective scale factor is still coarse
+	avTuneSuggestedScale = 0.02 // the suggested per-table autovacuum_vacuum_scale_factor
+	avTuneSuggestedThres = 1000 // and threshold
 )
 
 // TuningIDs identifies the config-recommendation findings, surfaced together by
@@ -119,6 +134,7 @@ var TuningIDs = map[string]bool{
 	"io_concurrency_low":          true,
 	"plan_cache_mode_forced":      true,
 	"slot_wal_keep_unbounded":     true,
+	"autovacuum_table_tuning":     true,
 }
 
 // knownIDs is every finding ID Compute can emit. It is the whitelist the config
@@ -150,8 +166,8 @@ var knownIDs = map[string]bool{
 	"high_rollback_ratio": true, "pg_stat_statements_missing": true,
 	"stale_stats_window":   true,
 	"io_read_latency_high": true, "io_concurrency_low": true, "plan_cache_mode_forced": true,
-	"slot_wal_keep_unbounded": true,
-	"pgaudit_silent":          true, "pgaudit_logs_parameters": true, "pgaudit_double_logging": true,
+	"slot_wal_keep_unbounded": true, "partition_skew": true, "autovacuum_table_tuning": true,
+	"pgaudit_silent": true, "pgaudit_logs_parameters": true, "pgaudit_double_logging": true,
 	// B2 meta-findings (the suppression system reporting on itself).
 	"suppression_expired": true, "suppression_unused": true,
 }
@@ -197,6 +213,8 @@ func ComputeWithTunables(c *model.Context, tun Tunables) []model.Finding {
 	unindexedForeignKeys(c, add)
 	seqScanHeavy(c, add)
 	partitionSeqScanHeavy(c, add)
+	partitionSkew(c, add)
+	autovacuumTableTuning(c, add)
 	bloatedTables(c, add, tun)
 	staleStatistics(c, add)
 	autovacuumHealth(c, add)
@@ -726,6 +744,111 @@ func partitionSeqScanHeavy(c *model.Context, add func(model.Finding)) {
 	})
 }
 
+// partitionSkew — one leaf of a partitioned table takes far more scans (or holds
+// far more rows) than the per-partition average. This is what pgbot can see of
+// the shard/skew problem: a hash partitioning key with a hot value, or a list
+// key where one tenant dwarfs the rest. Time-range partitioning skews toward the
+// newest leaf by design — the docs page says when that is fine.
+func partitionSkew(c *model.Context, add func(model.Finding)) {
+	if c.Tables == nil || c.Window.ColdWindow() {
+		return
+	}
+	var ev, objs []string
+	worst := 0.0
+	for _, p := range c.Tables.Partitioned {
+		if p.Partitions < partitionSkewMinParts {
+			continue
+		}
+		total := p.SeqScans + p.IndexScans
+		avgScans := float64(total) / float64(p.Partitions)
+		avgRows := float64(p.LiveTuples) / float64(p.Partitions)
+		var parts []string
+		if total >= partitionSkewMinScans && avgScans > 0 && float64(p.HotScans) >= partitionSkewFactor*avgScans {
+			f := float64(p.HotScans) / avgScans
+			worst = math.Max(worst, f)
+			parts = append(parts, fmt.Sprintf("%s takes %.0f× the average scans (%s of %s)", p.HotPartition, f, human(p.HotScans), human(total)))
+		}
+		if p.LiveTuples >= partitionSkewMinRows && avgRows > 0 && float64(p.BigRows) >= partitionSkewFactor*avgRows {
+			f := float64(p.BigRows) / avgRows
+			worst = math.Max(worst, f)
+			parts = append(parts, fmt.Sprintf("%s holds %.0f× the average rows (%s of %s)", p.BigPartition, f, human(p.BigRows), human(p.LiveTuples)))
+		}
+		if len(parts) == 0 {
+			continue
+		}
+		ev = append(ev, fmt.Sprintf("%s.%s (%d partitions): %s", p.Schema, p.Name, p.Partitions, strings.Join(parts, "; ")))
+		objs = append(objs, p.Schema+"."+p.Name)
+	}
+	if len(ev) == 0 {
+		return
+	}
+	add(model.Finding{
+		ID: "partition_skew", Severity: model.SeverityInfo,
+		Title:       fmt.Sprintf("%d partitioned table(s) with a hot partition (%.0f× the average)", len(ev), worst),
+		Detail:      "Partitioning only spreads work when the key spreads it. One leaf taking most of the scans or rows means the partition key has a hot value — a tenant that dwarfs the rest, a status column with one common state, or a hash key with low cardinality. Every operation on that leaf (vacuum, index build, scan) is as slow as an unpartitioned table, and the same key would produce one hot shard if the table were ever distributed.",
+		Evidence:    ev,
+		Objects:     objs,
+		Remediation: "For a time-range key this is the newest partition and expected. Otherwise re-examine the key: sub-partition the hot value, choose a higher-cardinality key (tenant_id + a hash), or accept it and give the hot leaf its own autovacuum settings and indexes.",
+		Caveats:     []string{"scan counts are cumulative since the stats reset — a recently attached partition looks cold, a detached-and-reattached one looks new"},
+		Impact:      impact(model.DimThroughput, math.Min(50, 10+worst*3), fmt.Sprintf("%.0f× hot partition", worst), "hottest leaf vs per-partition average in pg_stat_user_tables"),
+		Confidence:  0.55,
+	})
+}
+
+// autovacuumTableTuning — a large, write-active table still on the global
+// autovacuum_vacuum_scale_factor (default 20%). On a 50M-row table that means
+// 10M dead rows before autovacuum starts; the documented fix is a per-table
+// override, derived from the table's size rather than lowering every table's
+// trigger globally.
+func autovacuumTableTuning(c *model.Context, add func(model.Finding)) {
+	if c.Tables == nil {
+		return
+	}
+	gThresh := settingFloat(c, "autovacuum_vacuum_threshold", 50)
+	gScale := settingFloat(c, "autovacuum_vacuum_scale_factor", 0.2)
+	var ev, objs []string
+	var worstTrigger int64
+	for _, t := range c.Tables.Top {
+		if t.LiveTuples < avTuneMinRows || t.AutovacuumDisabled || t.VacuumScaleOverride != nil {
+			continue
+		}
+		if t.DeadTuples == 0 && t.Updates == 0 {
+			continue // append-only or idle: the vacuum trigger is not the constraint
+		}
+		if gScale < avTuneMinScale {
+			continue
+		}
+		th := gThresh
+		if t.VacuumThresholdOverride != nil {
+			th = *t.VacuumThresholdOverride
+		}
+		trigger := int64(th + gScale*float64(t.LiveTuples))
+		suggested := int64(avTuneSuggestedThres + avTuneSuggestedScale*float64(t.LiveTuples))
+		if trigger > worstTrigger {
+			worstTrigger = trigger
+		}
+		ev = append(ev, fmt.Sprintf("%s.%s: %s rows, %s dead now; autovacuum waits for %s dead rows (scale %g) → suggested %s (scale %g, threshold %d)",
+			t.Schema, t.Name, human(t.LiveTuples), human(t.DeadTuples), human(trigger), gScale, human(suggested), avTuneSuggestedScale, avTuneSuggestedThres))
+		objs = append(objs, t.Schema+"."+t.Name)
+		if len(ev) == 10 {
+			break
+		}
+	}
+	if len(ev) == 0 {
+		return
+	}
+	add(model.Finding{
+		ID: "autovacuum_table_tuning", Severity: model.SeverityInfo,
+		Title:       fmt.Sprintf("%d large table(s) on the global autovacuum scale factor — up to %s dead rows before a vacuum", len(ev), human(worstTrigger)),
+		Detail:      "autovacuum_vacuum_scale_factor is a fraction of the table: the default 20% is fine for a 10k-row table and lets a 50M-row table accumulate 10M dead rows (and the bloat, index growth and xid age that come with them) before autovacuum even starts. The right trigger for a large, write-active table is a small fraction plus a fixed threshold, set on the table so every other relation keeps the default.",
+		Evidence:    ev,
+		Objects:     objs,
+		Remediation: fmt.Sprintf("Per table, not globally: ALTER TABLE <schema.table> SET (autovacuum_vacuum_scale_factor = %g, autovacuum_vacuum_threshold = %d, autovacuum_analyze_scale_factor = 0.01, autovacuum_analyze_threshold = 500); takes effect at the next autovacuum cycle, no restart. Watch autovacuum worker saturation afterward — more frequent vacuums on big tables need cost budget (autovacuum_vacuum_cost_limit).", avTuneSuggestedScale, avTuneSuggestedThres),
+		Impact:      impact(model.DimStorage, math.Min(45, 15+math.Log10(float64(worstTrigger))*3), human(worstTrigger)+" dead rows before vacuum", "autovacuum_vacuum_threshold + scale × n_live_tup on the global settings"),
+		Confidence:  0.7,
+	})
+}
+
 func seqScanHeavy(c *model.Context, add func(model.Finding)) {
 	if c.Tables == nil || c.Window.ColdWindow() { // scan counts are cold-window-sensitive
 		return
@@ -1125,12 +1248,23 @@ func waitFindings(c *model.Context, add func(model.Finding)) {
 
 	// IO-bound: the whole window dominated by storage reads/writes.
 	if io := share("IO"); io > waitIOBoundShare {
+		ev := []string{ioEvidence(w)}
+		rem := "Add RAM/shared_buffers or better indexes; check for large scans returning few rows."
+		if st := c.IOStats; st != nil && st.Exactness == model.ExactnessSampled && st.TrackIOTiming && st.ReadLatencyMS != nil && st.ReadsInWindow >= ioReadLatencyMinOps {
+			if *st.ReadLatencyMS >= 1 {
+				ev = append(ev, fmt.Sprintf("pg_stat_io: %d physical reads at %.2f ms each — the device served them, not the page cache", st.ReadsInWindow, *st.ReadLatencyMS))
+				rem = "Reads wait on the device: cut blocks read first (top queries by shared_blks_read, indexes, bloat), then fit the working set in shared_buffers, then effective_io_concurrency / io_method / volume class — re-measure read latency after each."
+			} else {
+				ev = append(ev, fmt.Sprintf("pg_stat_io: %d physical reads at %.2f ms each — served from the kernel page cache; the cost is volume, not device latency", st.ReadsInWindow, *st.ReadLatencyMS))
+				rem = "Reads are cheap but many: find the query reading the most blocks (pgbot queries) and give it an index (pgbot advise) — more cache or faster storage would not change this."
+			}
+		}
 		add(model.Finding{
 			ID: "wait_io_bound", Severity: model.SeverityWarn,
 			Title:       fmt.Sprintf("%.0f%% of active time was spent waiting on IO", io*100),
 			Detail:      "Most active samples were waiting on the storage layer, not on CPU or locks. The working set may not fit in cache, or a few queries are scanning far more than they return.",
-			Evidence:    []string{ioEvidence(w)},
-			Remediation: "Add RAM/shared_buffers or better indexes; check for large scans returning few rows.",
+			Evidence:    ev,
+			Remediation: rem,
 			Impact: impact(model.DimThroughput, math.Min(90, io*100),
 				fmt.Sprintf("%.0f%% of active time on IO", io*100),
 				"ASH: share of samples with wait_event_type = IO"),

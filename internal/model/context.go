@@ -330,6 +330,12 @@ type PartitionRollup struct {
 	LiveTuples int64  `json:"live_tuples"`
 	SeqScans   int64  `json:"seq_scans"`
 	IndexScans int64  `json:"index_scans"`
+	// Skew evidence (1.4.0): the leaf taking the most scans and the leaf holding
+	// the most rows. Cumulative counters — a newly attached partition looks cold.
+	HotPartition string `json:"hot_partition,omitempty"`
+	HotScans     int64  `json:"hot_scans,omitempty"`
+	BigPartition string `json:"big_partition,omitempty"`
+	BigRows      int64  `json:"big_rows,omitempty"`
 }
 
 type TableStat struct {

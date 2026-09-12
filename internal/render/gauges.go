@@ -215,12 +215,13 @@ func buildChecked(c *model.Context) []string {
 	deadlocksClean := c.Health != nil && c.Health.DeadlocksPerMin != nil && *c.Health.DeadlocksPerMin == 0
 	subsystems := []checkedSubsystem{
 		{"queries", c.Queries != nil && c.Queries.Enabled,
-			[]string{"query_slowdown", "seq_scan_heavy", "partition_seq_scan_heavy", "pgss_entries_evicted", "pg_stat_statements_missing"}},
+			[]string{"query_slowdown", "seq_scan_heavy", "partition_seq_scan_heavy", "partition_skew", "pgss_entries_evicted", "pg_stat_statements_missing"}},
 		{"indexes", c.Indexes != nil,
 			[]string{"unused_indexes", "index_invalid", "redundant_indexes", "fk_unindexed"}},
 		{"vacuum", c.Tables != nil,
 			[]string{"table_bloat", "autovacuum_disabled_on_table", "table_never_vacuumed", "autovacuum_starved", "autovacuum_saturated",
-				"autovacuum_long_running", "stale_statistics", "never_analyzed", "low_hot_update_ratio", "vacuum_horizon_blocked", "autovacuum_off"}},
+				"autovacuum_long_running", "stale_statistics", "never_analyzed", "low_hot_update_ratio", "vacuum_horizon_blocked", "autovacuum_off",
+				"autovacuum_table_tuning"}},
 		{"replication", c.Replication != nil,
 			[]string{"sync_rep_degraded", "replica_lag_time", "recovery_conflicts", "replica_disconnected", "replication_slot_inactive", "subscription_worker_down"}},
 		{"checkpoints", c.WAL != nil, []string{"checkpoints_forced"}},
