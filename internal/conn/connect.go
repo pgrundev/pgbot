@@ -63,6 +63,10 @@ func ConnectDB(ctx context.Context, connString, database string) (*Target, error
 	// hostname — see sshtunnel.go.
 	if dial := sshDialFunc(); dial != nil {
 		cfg.ConnConfig.DialFunc = dial
+		// Let the SSH server resolve database hostnames.
+		cfg.ConnConfig.LookupFunc = func(_ context.Context, host string) ([]string, error) {
+			return []string{host}, nil
+		}
 	}
 
 	// Drop client-only params pgx forwarded into RuntimeParams (it would send them
