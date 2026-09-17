@@ -43,7 +43,8 @@ type inspectFlags struct {
 	failOn       string   // exit non-zero on findings at/above this severity (B5-1)
 	format       string   // text|json|sarif|junit (B5-2)
 	allDatabases bool     // inspect every database in the cluster (B3)
-	parallel     int      // max concurrent database inspections (B3); default 1 = serial
+	allInstances bool     // Aurora: inspect every writer/reader instance behind the endpoint (experimental)
+	parallel     int      // max concurrent target inspections (B3); default 1 = serial
 	profile      string   // full (default) | schema: emit only schema-scoped findings (D3-1)
 	failOnNew    string   // path to a base report; act only on findings new vs it (D3-2)
 }
@@ -84,7 +85,8 @@ func newInspectCmd() *cobra.Command {
 	fl.StringVar(&f.profile, "profile", "full", "which findings to run: full (a live database) | schema (catalog-only, safe on an empty CI database)")
 	fl.StringVar(&f.failOnNew, "fail-on-new", "", "path to a base report (JSON); mark findings already in it preexisting and act only on new ones")
 	fl.BoolVar(&f.allDatabases, "all-databases", false, "inspect every database in the cluster (cluster-wide findings reported once)")
-	fl.IntVar(&f.parallel, "parallel", 1, "max databases inspected concurrently under --all-databases (default 1 = serial)")
+	fl.BoolVar(&f.allInstances, "all-instances", false, "Aurora: discover every writer and reader instance behind the cluster endpoint and inspect each (experimental; composes with --all-databases)")
+	fl.IntVar(&f.parallel, "parallel", 1, "max targets inspected concurrently under --all-databases / --all-instances (default 1 = serial)")
 	return cmd
 }
 
@@ -105,7 +107,7 @@ func runInspect(cmd *cobra.Command, args []string, f inspectFlags) error {
 	if connString == "" {
 		return fmt.Errorf("no connection string (pass one or set $DATABASE_URL)")
 	}
-	if f.allDatabases {
+	if f.allDatabases || f.allInstances {
 		return runInspectAll(cmd.Context(), connString, f)
 	}
 

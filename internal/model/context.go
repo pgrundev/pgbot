@@ -185,10 +185,12 @@ type ServerInfo struct {
 	VersionNum    int        `json:"version_num"`
 	VersionText   string     `json:"version_text"`
 	Database      string     `json:"database"`
-	Provider      string     `json:"provider,omitempty"`    // detected managed platform: rds/aurora/cloudsql/azure/supabase/neon/unknown
-	InRecovery    bool       `json:"in_recovery,omitempty"` // true on a physical standby (A15-0)
-	ViaPooler     bool       `json:"via_pooler,omitempty"`  // connected through a transaction pooler (rates still correct)
-	StartedAt     *time.Time `json:"started_at,omitempty"`  // pg_postmaster_start_time()
+	Provider      string     `json:"provider,omitempty"`      // detected managed platform: rds/aurora/cloudsql/azure/supabase/neon/unknown
+	InRecovery    bool       `json:"in_recovery,omitempty"`   // true on a physical standby (A15-0)
+	ViaPooler     bool       `json:"via_pooler,omitempty"`    // connected through a transaction pooler (rates still correct)
+	Instance      string     `json:"instance,omitempty"`      // cluster member inspected under --all-instances (Aurora DB instance identifier)
+	InstanceRole  string     `json:"instance_role,omitempty"` // "writer" | "reader" under --all-instances
+	StartedAt     *time.Time `json:"started_at,omitempty"`    // pg_postmaster_start_time()
 	UptimeSeconds int64      `json:"uptime_seconds"`
 	Extensions    []string   `json:"extensions"`
 	Capabilities  []string   `json:"capabilities"` // human-readable flags that were satisfied
