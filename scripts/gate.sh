@@ -22,7 +22,9 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 # (2) Build and test from HEAD, isolated from the working tree.
-git clone --quiet --local . "$tmp"
+# --no-hardlinks: TMPDIR is often tmpfs (e.g. under `nix develop`) and
+# hardlinking the clone fails across filesystems.
+git clone --quiet --local --no-hardlinks . "$tmp"
 pushd "$tmp" >/dev/null
 echo "→ gating HEAD ($head) in an isolated clone"
 CGO_ENABLED=0 go build ./...
