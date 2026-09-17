@@ -295,6 +295,27 @@ type WaitStudyOptions struct {
 // budget and a failed snapshot is dropped, never queued behind a lock storm.
 // Ctrl+C mid-window reports what was gathered (coverage says how much).
 func RunWaitStudy(ctx context.Context, t *conn.Target, caps conn.Capabilities, o WaitStudyOptions) *model.WaitStudy {
+	// Bracket the window with pg_stat_io so the diagnosis can say whether IO
+	// waits were the device (ms per read) or cache misses served by the kernel.
+	var ioA any
+	if caps.HasStatIO() {
+		ioA, _ = iostatsCollector{}.Sample(ctx, t, caps)
+	}
+	ioStart := time.Now()
+	study := runWaitStudy(ctx, t, caps, o)
+	if ioA != nil {
+		if ioB, err := (iostatsCollector{}).Sample(ctx, t, caps); err == nil {
+			var scratch model.Context
+			iostatsCollector{}.Assemble(&scratch, caps, sampled{A: ioA, B: ioB}, time.Since(ioStart), Options{})
+			if scratch.IOStats != nil && scratch.IOStats.Exactness == model.ExactnessSampled {
+				study.IO = scratch.IOStats
+			}
+		}
+	}
+	return study
+}
+
+func runWaitStudy(ctx context.Context, t *conn.Target, caps conn.Capabilities, o WaitStudyOptions) *model.WaitStudy {
 	var snaps []LockSnapshot
 	snapFails := 0
 	done := make(chan struct{})

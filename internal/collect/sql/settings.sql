@@ -25,6 +25,11 @@ WHERE name IN (
   'autovacuum_analyze_threshold', 'autovacuum_analyze_scale_factor', 'default_statistics_target',
   'autovacuum_max_workers', 'autovacuum_vacuum_threshold', 'autovacuum_naptime',
   'autovacuum_vacuum_cost_delay', 'autovacuum_vacuum_cost_limit',
+  -- memory envelope, plan cache, slot retention, and the IO knobs (PG18 adds
+  -- io_method / io_workers / io_max_concurrency; absent rows are simply absent)
+  'hash_mem_multiplier', 'huge_pages', 'plan_cache_mode', 'max_slot_wal_keep_size',
+  'effective_io_concurrency', 'maintenance_io_concurrency', 'io_method', 'io_workers',
+  'io_max_concurrency', 'wal_compression',
   -- audit posture (rows exist only when pgaudit is loaded; log_statement always)
   'pgaudit.log', 'pgaudit.log_parameter', 'log_statement'
 )

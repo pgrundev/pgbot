@@ -62,6 +62,10 @@ type partitionRow struct {
 	LiveTuples int64  `db:"live_tuples"`
 	SeqScans   int64  `db:"seq_scans"`
 	IndexScans int64  `db:"index_scans"`
+	HotPart    string `db:"hot_partition"`
+	HotScans   int64  `db:"hot_scans"`
+	BigPart    string `db:"big_partition"`
+	BigRows    int64  `db:"big_rows"`
 }
 
 type tablesSample struct {
@@ -117,6 +121,7 @@ func (tablesCollector) Assemble(c *model.Context, _ conn.Capabilities, s sampled
 		tbl.Partitioned = append(tbl.Partitioned, model.PartitionRollup{
 			Schema: p.Schema, Name: p.Table, Partitions: p.Partitions, TotalBytes: p.TotalBytes,
 			LiveTuples: p.LiveTuples, SeqScans: p.SeqScans, IndexScans: p.IndexScans,
+			HotPartition: p.HotPart, HotScans: p.HotScans, BigPartition: p.BigPart, BigRows: p.BigRows,
 		})
 	}
 	c.Tables = tbl

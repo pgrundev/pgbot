@@ -89,6 +89,33 @@ const (
 	tuneForcedCheckpointMin  = 10      // need enough checkpoints to judge the ratio
 	tuneConnOverprovMax      = 200     // only flag over-provisioning above this max_connections
 	tuneConnOverprovUseFrac  = 0.15    // used < 15% of max → over-provisioned
+
+	// io_read_latency_high: mean physical read latency (pg_stat_io.read_time /
+	// reads over the window) at or above this is storage-bound, not cache-bound.
+	// 5 ms is the boundary between "kernel page cache / local NVMe" and "waiting
+	// on a network volume"; the floor on reads keeps a handful of cold reads
+	// from producing a meaningless mean.
+	ioReadLatencyWarnMS = 5.0
+	ioReadLatencyCritMS = 20.0
+	ioReadLatencyMinOps = 500
+	// poolSizing: the cumulative window must be at least this old before the
+	// average-concurrency estimate is trustworthy.
+	poolSizingMinWindowS = 3600
+
+	// partition_skew: the hottest leaf takes ≥ this multiple of the per-partition
+	// average scan count (or holds that multiple of the average row count).
+	partitionSkewFactor   = 4.0
+	partitionSkewMinParts = 4
+	partitionSkewMinScans = 1000
+	partitionSkewMinRows  = 100_000
+
+	// autovacuum_table_tuning: a table this large on the global 20% scale factor
+	// waits for this many dead rows before autovacuum starts — the per-table
+	// override the docs recommend for large, write-active relations.
+	avTuneMinRows        = 1_000_000
+	avTuneMinScale       = 0.1  // only flag when the effective scale factor is still coarse
+	avTuneSuggestedScale = 0.02 // the suggested per-table autovacuum_vacuum_scale_factor
+	avTuneSuggestedThres = 1000 // and threshold
 )
 
 // TuningIDs identifies the config-recommendation findings, surfaced together by
@@ -104,6 +131,10 @@ var TuningIDs = map[string]bool{
 	"random_page_cost_high":       true,
 	"statement_timeout_unset":     true,
 	"work_mem_overcommit":         true,
+	"io_concurrency_low":          true,
+	"plan_cache_mode_forced":      true,
+	"slot_wal_keep_unbounded":     true,
+	"autovacuum_table_tuning":     true,
 }
 
 // knownIDs is every finding ID Compute can emit. It is the whitelist the config
@@ -133,8 +164,10 @@ var knownIDs = map[string]bool{
 	"full_page_writes_off": true, "autovacuum_off": true, "random_page_cost_high": true,
 	"work_mem_overcommit": true, "statement_timeout_unset": true, "io_timing_off": true,
 	"high_rollback_ratio": true, "pg_stat_statements_missing": true,
-	"stale_stats_window": true,
-	"pgaudit_silent":     true, "pgaudit_logs_parameters": true, "pgaudit_double_logging": true,
+	"stale_stats_window":   true,
+	"io_read_latency_high": true, "io_concurrency_low": true, "plan_cache_mode_forced": true,
+	"slot_wal_keep_unbounded": true, "partition_skew": true, "autovacuum_table_tuning": true,
+	"pgaudit_silent": true, "pgaudit_logs_parameters": true, "pgaudit_double_logging": true,
 	// B2 meta-findings (the suppression system reporting on itself).
 	"suppression_expired": true, "suppression_unused": true,
 }
@@ -180,6 +213,8 @@ func ComputeWithTunables(c *model.Context, tun Tunables) []model.Finding {
 	unindexedForeignKeys(c, add)
 	seqScanHeavy(c, add)
 	partitionSeqScanHeavy(c, add)
+	partitionSkew(c, add)
+	autovacuumTableTuning(c, add)
 	bloatedTables(c, add, tun)
 	staleStatistics(c, add)
 	autovacuumHealth(c, add)
@@ -204,6 +239,7 @@ func ComputeWithTunables(c *model.Context, tun Tunables) []model.Finding {
 	checkpointsForced(c, add)
 	connectionsOverprovisioned(c, add)
 	ioTimingOff(c, add)
+	ioReadLatencyHigh(c, add)
 	configSanity(c, add)
 	auditPosture(c, add)
 	waitFindings(c, add)
@@ -708,6 +744,111 @@ func partitionSeqScanHeavy(c *model.Context, add func(model.Finding)) {
 	})
 }
 
+// partitionSkew — one leaf of a partitioned table takes far more scans (or holds
+// far more rows) than the per-partition average. This is what pgbot can see of
+// the shard/skew problem: a hash partitioning key with a hot value, or a list
+// key where one tenant dwarfs the rest. Time-range partitioning skews toward the
+// newest leaf by design — the docs page says when that is fine.
+func partitionSkew(c *model.Context, add func(model.Finding)) {
+	if c.Tables == nil || c.Window.ColdWindow() {
+		return
+	}
+	var ev, objs []string
+	worst := 0.0
+	for _, p := range c.Tables.Partitioned {
+		if p.Partitions < partitionSkewMinParts {
+			continue
+		}
+		total := p.SeqScans + p.IndexScans
+		avgScans := float64(total) / float64(p.Partitions)
+		avgRows := float64(p.LiveTuples) / float64(p.Partitions)
+		var parts []string
+		if total >= partitionSkewMinScans && avgScans > 0 && float64(p.HotScans) >= partitionSkewFactor*avgScans {
+			f := float64(p.HotScans) / avgScans
+			worst = math.Max(worst, f)
+			parts = append(parts, fmt.Sprintf("%s takes %.0f× the average scans (%s of %s)", p.HotPartition, f, human(p.HotScans), human(total)))
+		}
+		if p.LiveTuples >= partitionSkewMinRows && avgRows > 0 && float64(p.BigRows) >= partitionSkewFactor*avgRows {
+			f := float64(p.BigRows) / avgRows
+			worst = math.Max(worst, f)
+			parts = append(parts, fmt.Sprintf("%s holds %.0f× the average rows (%s of %s)", p.BigPartition, f, human(p.BigRows), human(p.LiveTuples)))
+		}
+		if len(parts) == 0 {
+			continue
+		}
+		ev = append(ev, fmt.Sprintf("%s.%s (%d partitions): %s", p.Schema, p.Name, p.Partitions, strings.Join(parts, "; ")))
+		objs = append(objs, p.Schema+"."+p.Name)
+	}
+	if len(ev) == 0 {
+		return
+	}
+	add(model.Finding{
+		ID: "partition_skew", Severity: model.SeverityInfo,
+		Title:       fmt.Sprintf("%d partitioned table(s) with a hot partition (%.0f× the average)", len(ev), worst),
+		Detail:      "Partitioning only spreads work when the key spreads it. One leaf taking most of the scans or rows means the partition key has a hot value — a tenant that dwarfs the rest, a status column with one common state, or a hash key with low cardinality. Every operation on that leaf (vacuum, index build, scan) is as slow as an unpartitioned table, and the same key would produce one hot shard if the table were ever distributed.",
+		Evidence:    ev,
+		Objects:     objs,
+		Remediation: "For a time-range key this is the newest partition and expected. Otherwise re-examine the key: sub-partition the hot value, choose a higher-cardinality key (tenant_id + a hash), or accept it and give the hot leaf its own autovacuum settings and indexes.",
+		Caveats:     []string{"scan counts are cumulative since the stats reset — a recently attached partition looks cold, a detached-and-reattached one looks new"},
+		Impact:      impact(model.DimThroughput, math.Min(50, 10+worst*3), fmt.Sprintf("%.0f× hot partition", worst), "hottest leaf vs per-partition average in pg_stat_user_tables"),
+		Confidence:  0.55,
+	})
+}
+
+// autovacuumTableTuning — a large, write-active table still on the global
+// autovacuum_vacuum_scale_factor (default 20%). On a 50M-row table that means
+// 10M dead rows before autovacuum starts; the documented fix is a per-table
+// override, derived from the table's size rather than lowering every table's
+// trigger globally.
+func autovacuumTableTuning(c *model.Context, add func(model.Finding)) {
+	if c.Tables == nil {
+		return
+	}
+	gThresh := settingFloat(c, "autovacuum_vacuum_threshold", 50)
+	gScale := settingFloat(c, "autovacuum_vacuum_scale_factor", 0.2)
+	var ev, objs []string
+	var worstTrigger int64
+	for _, t := range c.Tables.Top {
+		if t.LiveTuples < avTuneMinRows || t.AutovacuumDisabled || t.VacuumScaleOverride != nil {
+			continue
+		}
+		if t.DeadTuples == 0 && t.Updates == 0 {
+			continue // append-only or idle: the vacuum trigger is not the constraint
+		}
+		if gScale < avTuneMinScale {
+			continue
+		}
+		th := gThresh
+		if t.VacuumThresholdOverride != nil {
+			th = *t.VacuumThresholdOverride
+		}
+		trigger := int64(th + gScale*float64(t.LiveTuples))
+		suggested := int64(avTuneSuggestedThres + avTuneSuggestedScale*float64(t.LiveTuples))
+		if trigger > worstTrigger {
+			worstTrigger = trigger
+		}
+		ev = append(ev, fmt.Sprintf("%s.%s: %s rows, %s dead now; autovacuum waits for %s dead rows (scale %g) → suggested %s (scale %g, threshold %d)",
+			t.Schema, t.Name, human(t.LiveTuples), human(t.DeadTuples), human(trigger), gScale, human(suggested), avTuneSuggestedScale, avTuneSuggestedThres))
+		objs = append(objs, t.Schema+"."+t.Name)
+		if len(ev) == 10 {
+			break
+		}
+	}
+	if len(ev) == 0 {
+		return
+	}
+	add(model.Finding{
+		ID: "autovacuum_table_tuning", Severity: model.SeverityInfo,
+		Title:       fmt.Sprintf("%d large table(s) on the global autovacuum scale factor — up to %s dead rows before a vacuum", len(ev), human(worstTrigger)),
+		Detail:      "autovacuum_vacuum_scale_factor is a fraction of the table: the default 20% is fine for a 10k-row table and lets a 50M-row table accumulate 10M dead rows (and the bloat, index growth and xid age that come with them) before autovacuum even starts. The right trigger for a large, write-active table is a small fraction plus a fixed threshold, set on the table so every other relation keeps the default.",
+		Evidence:    ev,
+		Objects:     objs,
+		Remediation: fmt.Sprintf("Per table, not globally: ALTER TABLE <schema.table> SET (autovacuum_vacuum_scale_factor = %g, autovacuum_vacuum_threshold = %d, autovacuum_analyze_scale_factor = 0.01, autovacuum_analyze_threshold = 500); takes effect at the next autovacuum cycle, no restart. Watch autovacuum worker saturation afterward — more frequent vacuums on big tables need cost budget (autovacuum_vacuum_cost_limit).", avTuneSuggestedScale, avTuneSuggestedThres),
+		Impact:      impact(model.DimStorage, math.Min(45, 15+math.Log10(float64(worstTrigger))*3), human(worstTrigger)+" dead rows before vacuum", "autovacuum_vacuum_threshold + scale × n_live_tup on the global settings"),
+		Confidence:  0.7,
+	})
+}
+
 func seqScanHeavy(c *model.Context, add func(model.Finding)) {
 	if c.Tables == nil || c.Window.ColdWindow() { // scan counts are cold-window-sensitive
 		return
@@ -1107,12 +1248,23 @@ func waitFindings(c *model.Context, add func(model.Finding)) {
 
 	// IO-bound: the whole window dominated by storage reads/writes.
 	if io := share("IO"); io > waitIOBoundShare {
+		ev := []string{ioEvidence(w)}
+		rem := "Add RAM/shared_buffers or better indexes; check for large scans returning few rows."
+		if st := c.IOStats; st != nil && st.Exactness == model.ExactnessSampled && st.TrackIOTiming && st.ReadLatencyMS != nil && st.ReadsInWindow >= ioReadLatencyMinOps {
+			if *st.ReadLatencyMS >= 1 {
+				ev = append(ev, fmt.Sprintf("pg_stat_io: %d physical reads at %.2f ms each — the device served them, not the page cache", st.ReadsInWindow, *st.ReadLatencyMS))
+				rem = "Reads wait on the device: cut blocks read first (top queries by shared_blks_read, indexes, bloat), then fit the working set in shared_buffers, then effective_io_concurrency / io_method / volume class — re-measure read latency after each."
+			} else {
+				ev = append(ev, fmt.Sprintf("pg_stat_io: %d physical reads at %.2f ms each — served from the kernel page cache; the cost is volume, not device latency", st.ReadsInWindow, *st.ReadLatencyMS))
+				rem = "Reads are cheap but many: find the query reading the most blocks (pgbot queries) and give it an index (pgbot advise) — more cache or faster storage would not change this."
+			}
+		}
 		add(model.Finding{
 			ID: "wait_io_bound", Severity: model.SeverityWarn,
 			Title:       fmt.Sprintf("%.0f%% of active time was spent waiting on IO", io*100),
 			Detail:      "Most active samples were waiting on the storage layer, not on CPU or locks. The working set may not fit in cache, or a few queries are scanning far more than they return.",
-			Evidence:    []string{ioEvidence(w)},
-			Remediation: "Add RAM/shared_buffers or better indexes; check for large scans returning few rows.",
+			Evidence:    ev,
+			Remediation: rem,
 			Impact: impact(model.DimThroughput, math.Min(90, io*100),
 				fmt.Sprintf("%.0f%% of active time on IO", io*100),
 				"ASH: share of samples with wait_event_type = IO"),
@@ -2028,11 +2180,18 @@ func connectionsOverprovisioned(c *model.Context, add func(model.Finding)) {
 	if float64(c.Limits.ConnectionsUsed) >= float64(c.Limits.ConnectionsMax)*tuneConnOverprovUseFrac {
 		return
 	}
+	rem := "Put a pooler (PgBouncer) in front and lower max_connections to match real concurrency."
+	var ev []string
+	if busy, pool, ok := PoolSizing(c); ok {
+		ev = append(ev, fmt.Sprintf("workload keeps ~%.1f backends busy on average (pg_stat_statements total time ÷ window); a pool of ~%d server connections covers 3× bursts", busy, pool))
+		rem = fmt.Sprintf("Put a pooler (PgBouncer, transaction mode) in front with a server pool around %d, then lower max_connections to match. Watch the pooler's waiting-clients count: a pool is right-sized when it stays near zero outside peaks.", pool)
+	}
 	add(model.Finding{
 		ID: "connections_overprovisioned", Severity: model.SeverityInfo,
 		Title:       fmt.Sprintf("max_connections is %d but only %d in use", c.Limits.ConnectionsMax, c.Limits.ConnectionsUsed),
 		Detail:      "Each connection slot reserves backend memory (roughly work_mem plus overhead) whether used or not. A high max_connections with low real usage wastes RAM and invites connection storms.",
-		Remediation: "Put a pooler (PgBouncer) in front and lower max_connections to match real concurrency.",
+		Evidence:    ev,
+		Remediation: rem,
 		Impact: impact(model.DimCost, 20,
 			fmt.Sprintf("%d/%d slots used", c.Limits.ConnectionsUsed, c.Limits.ConnectionsMax), "max_connections vs observed usage"),
 		Confidence: 0.6,
@@ -2089,25 +2248,80 @@ func configSanity(c *model.Context, add func(model.Finding)) {
 			Confidence:  0.7,
 		})
 	}
-	// Implausible worst-case sort memory: work_mem is per operation, so a busy
-	// cluster can allocate up to work_mem × max_connections; above effective_cache_size
-	// that's a mis-set knob inviting OOM.
+	// Peak memory envelope: shared_buffers is fixed, and every backend can hold
+	// work_mem × hash_mem_multiplier per hash operation (a hash join or hash agg
+	// gets the multiplier; sorts get plain work_mem). max_connections is the
+	// ceiling on backends, so shared_buffers + work_mem × hash_mem_multiplier ×
+	// max_connections is the envelope one burst can reach. effective_cache_size
+	// is the closest thing to "RAM available to Postgres" the server tells us —
+	// above it the host has no cache left to give, and the next step is OOM.
 	if wm, ok1 := parseMemBytes(settingParam(c, "work_mem")); ok1 {
 		if ecs, ok2 := parseMemBytes(settingParam(c, "effective_cache_size")); ok2 && ecs > 0 {
 			if mc, err := strconv.Atoi(settingParam(c, "max_connections")); err == nil && mc > 0 {
-				worst := wm * int64(mc)
-				if worst > ecs {
+				hmm := settingFloat(c, "hash_mem_multiplier", 1)
+				if hmm < 1 {
+					hmm = 1
+				}
+				sb, _ := parseMemBytes(settingParam(c, "shared_buffers"))
+				perBackend := int64(float64(wm) * hmm)
+				envelope := sb + perBackend*int64(mc)
+				if envelope > ecs {
+					title := fmt.Sprintf("work_mem × %g × max_connections + shared_buffers (%s) exceeds effective_cache_size (%s)", hmm, humanBytes(envelope), humanBytes(ecs))
 					add(model.Finding{
 						ID: "work_mem_overcommit", Object: "setting:work_mem", Severity: model.SeverityWarn,
-						Title:       fmt.Sprintf("work_mem × max_connections (%s) exceeds effective_cache_size (%s)", humanBytes(worst), humanBytes(ecs)),
-						Detail:      "work_mem is allocated per sort/hash operation, so worst-case memory under load is roughly work_mem × max_connections. When that exceeds the memory you've told the planner exists, a burst of concurrent sorts can push the host into OOM.",
-						Remediation: "Lower work_mem, cap concurrency with a pooler, or raise host memory. work_mem can also be raised per-session for the few queries that need it.",
-						Impact:      impact(model.DimRisk, 45, humanBytes(worst)+" worst-case", "work_mem × max_connections vs effective_cache_size"),
+						Title:  title,
+						Detail: "work_mem is allocated per sort/hash operation and hash operations get work_mem × hash_mem_multiplier, so one burst of concurrent memory-hungry queries can reach shared_buffers + work_mem × hash_mem_multiplier × max_connections. When that exceeds the memory you've told the planner exists, the host runs out of page cache and then of RAM — the OOM killer takes a backend or the postmaster.",
+						Evidence: []string{
+							"shared_buffers " + humanBytes(sb),
+							fmt.Sprintf("work_mem %s × hash_mem_multiplier %g = %s per hash operation", humanBytes(wm), hmm, humanBytes(perBackend)),
+							fmt.Sprintf("× max_connections %d = %s", mc, humanBytes(perBackend*int64(mc))),
+							"effective_cache_size " + humanBytes(ecs),
+						},
+						Remediation: "Lower work_mem or hash_mem_multiplier, cap real concurrency with a pooler so max_connections can drop, or raise host memory. Raise work_mem per-session (SET work_mem) only for the queries that spill.",
+						Impact:      impact(model.DimRisk, 45, humanBytes(envelope)+" peak envelope", "shared_buffers + work_mem × hash_mem_multiplier × max_connections vs effective_cache_size"),
 						Confidence:  0.55,
 					})
 				}
 			}
 		}
+	}
+	// plan_cache_mode pinned away from auto: a deliberate workaround, but it
+	// removes the planner's ability to switch between generic and custom plans
+	// when a parameter distribution changes — the parameter-sensitive-plan trap.
+	if pcm := settingParam(c, "plan_cache_mode"); pcm != "" && pcm != "auto" {
+		add(model.Finding{
+			ID: "plan_cache_mode_forced", Object: "setting:plan_cache_mode", Severity: model.SeverityInfo,
+			Title:       fmt.Sprintf("plan_cache_mode = %s cluster-wide — prepared statements can't adapt their plan", pcm),
+			Detail:      "By default Postgres runs five custom plans for a prepared statement, then switches to a generic plan only if it is not more expensive. Forcing one mode cluster-wide trades that adaptivity for predictability: force_generic_plan turns a skewed parameter (one tenant with 40% of the rows) into a plan built for the average one; force_custom_plan re-plans every execution.",
+			Remediation: "Prefer the default (auto) cluster-wide and pin the mode per role or per session (SET plan_cache_mode) for the specific statement that misbehaves. If a prepared query is periodically slow, compare EXPLAIN (GENERIC_PLAN) with a custom plan for a skewed value before blaming an index.",
+			Impact:      impact(model.DimLatency, 15, "plan_cache_mode="+pcm, "plan_cache_mode setting"),
+			Confidence:  0.6,
+		})
+	}
+	// Unbounded slot WAL retention with slots present: the default (-1) lets any
+	// stalled consumer retain WAL until the disk fills.
+	if settingParam(c, "max_slot_wal_keep_size") == "-1" && c.Replication != nil && len(c.Replication.Slots) > 0 {
+		n := len(c.Replication.Slots)
+		add(model.Finding{
+			ID: "slot_wal_keep_unbounded", Object: "setting:max_slot_wal_keep_size", Severity: model.SeverityInfo,
+			Title:       fmt.Sprintf("max_slot_wal_keep_size = -1 with %d replication slot(s) — WAL retention is unbounded", n),
+			Detail:      "A replication slot pins WAL from its restart point until its consumer catches up. With max_slot_wal_keep_size at the default (-1) there is no ceiling: a standby that is down, a stalled logical subscriber, or a forgotten slot retains WAL until pg_wal fills the disk and the primary stops. A bound trades that for a re-seed of the consumer — which is usually the better failure.",
+			Remediation: "Set max_slot_wal_keep_size to the WAL volume you can afford to keep (e.g. '50GB'; a reload). Size it above the longest consumer outage you want to survive, and alert on pg_replication_slots.wal_status = 'unreserved'. On PG17+ idle_replication_slot_timeout invalidates slots nobody has used.",
+			Impact:      impact(model.DimRisk, 25, fmt.Sprintf("%d slot(s), no retention cap", n), "max_slot_wal_keep_size vs pg_replication_slots"),
+			Confidence:  0.8,
+		})
+	}
+	// effective_io_concurrency at 1 or 0 on SSD-backed managed storage: bitmap
+	// heap scans issue one read at a time, leaving the device's queue idle.
+	if eic, err := strconv.Atoi(settingParam(c, "effective_io_concurrency")); err == nil && eic <= 1 && cloudProvider(c) {
+		add(model.Finding{
+			ID: "io_concurrency_low", Object: "setting:effective_io_concurrency", Severity: model.SeverityInfo,
+			Title:       fmt.Sprintf("effective_io_concurrency=%d on %s (SSD) — reads are issued one at a time", eic, orUnknownSetting(c.Server.Provider)),
+			Detail:      "effective_io_concurrency is how many concurrent reads Postgres asks the storage for during bitmap heap scans (and, on PG18, through the asynchronous-IO layer). 1 is the pre-PG18 rotational-disk default; SSD and network volumes serve dozens of outstanding reads at once, so a value of 1 leaves the device idle while a scan waits on each block in turn. PG18 defaults to 16.",
+			Remediation: "Raise effective_io_concurrency in steps (16, then 32) and re-measure read latency in pg_stat_io — pgbot's io_stats section — after each step. Do not maximize it blindly: past the device's useful queue depth the extra concurrency raises latency for every session. On PG18, also compare io_method = worker against the default on your storage.",
+			Impact:      impact(model.DimLatency, 20, fmt.Sprintf("eic=%d on SSD", eic), "effective_io_concurrency vs detected provider"),
+			Confidence:  0.6,
+		})
 	}
 	if settingParam(c, "statement_timeout") == "0" {
 		add(model.Finding{
@@ -2173,6 +2387,80 @@ func ioTimingOff(c *model.Context, add func(model.Finding)) {
 		Confidence:  1.0,
 	})
 }
+
+// ioReadLatencyHigh — physical reads in the sample window took a long time each.
+// This is the storage-bound verdict pg_stat_io makes possible: a read that
+// misses shared_buffers costs ~microseconds from the kernel page cache and
+// milliseconds from a network volume, and only the timing tells them apart.
+// Requires track_io_timing (otherwise read_time is 0 and there is no latency).
+func ioReadLatencyHigh(c *model.Context, add func(model.Finding)) {
+	io := c.IOStats
+	if io == nil || io.Exactness != model.ExactnessSampled || !io.TrackIOTiming || io.ReadLatencyMS == nil {
+		return
+	}
+	if io.ReadsInWindow < ioReadLatencyMinOps || *io.ReadLatencyMS < ioReadLatencyWarnMS {
+		return
+	}
+	lat := *io.ReadLatencyMS
+	sev, score := model.SeverityWarn, math.Min(70, 30+lat*2)
+	if lat >= ioReadLatencyCritMS {
+		sev, score = model.SeverityCritical, 85
+	}
+	ev := []string{
+		fmt.Sprintf("%d physical reads in the %.0fs window, mean %.2f ms each", io.ReadsInWindow, c.Window.SampleSeconds, lat),
+	}
+	if io.ReadsPerSec != nil {
+		ev = append(ev, fmt.Sprintf("%.0f reads/s", *io.ReadsPerSec))
+	}
+	// Name the heaviest reader so the fix targets it.
+	var top *model.IOStatRow
+	for i := range io.Rows {
+		r := &io.Rows[i]
+		if r.ReadLatencyMS != nil && (top == nil || r.ReadsPerSec > top.ReadsPerSec) {
+			top = r
+		}
+	}
+	if top != nil {
+		ev = append(ev, fmt.Sprintf("heaviest reader: %s / %s / %s at %.0f reads/s, %.2f ms", top.BackendType, top.Object, top.Context, top.ReadsPerSec, *top.ReadLatencyMS))
+	}
+	if c.Health != nil && c.Health.CacheHitUsable() {
+		ev = append(ev, fmt.Sprintf("shared-buffer hit ratio %.1f%%", *c.Health.CacheHitRatio*100))
+	}
+	add(model.Finding{
+		ID: "io_read_latency_high", Severity: sev,
+		Title:       fmt.Sprintf("Physical reads average %.1f ms — storage, not cache, is the wait", lat),
+		Detail:      "Every read that misses shared_buffers waited this long on average. Reads served by the kernel page cache return in microseconds, so a mean in the milliseconds means the working set is not in memory at all and the device (or a network volume's latency floor) is paying for each block. Raising shared_buffers only helps if the working set then fits; the durable fix is reading fewer blocks.",
+		Evidence:    ev,
+		Remediation: "First cut the reads: fix the top queries by shared_blks_read (pgbot queries), add the index that turns a scan into a lookup, and check autovacuum so bloat isn't inflating the block count. Then size memory to the working set (shared_buffers ~25% of RAM on a dedicated host). Only then tune IO: effective_io_concurrency in steps, io_method on PG18, or a faster volume class — re-measuring this latency after each change.",
+		Impact:      impact(model.DimLatency, score, fmt.Sprintf("%.1f ms per read", lat), "pg_stat_io read_time / reads over the sample window"),
+		Confidence:  0.75,
+	})
+}
+
+// PoolSizing estimates how many backends the workload keeps busy on average —
+// Little's law: total execution time ÷ elapsed time — from pg_stat_statements
+// totals over the cumulative stats window. recommended is a pool ceiling that
+// leaves ~3× headroom for bursts, floored at 8. ok is false when the window is
+// too short (<1h), pg_stat_statements is absent, or the totals are empty.
+// pgbot tune prints it; connections_overprovisioned names it. The two windows
+// (pg_stat_statements_reset vs pg_stat_reset) can differ, so this is an estimate.
+func PoolSizing(c *model.Context) (avgBusy float64, recommended int, ok bool) {
+	if c.Queries == nil || !c.Queries.Enabled || c.Queries.TotalExecMS <= 0 {
+		return 0, 0, false
+	}
+	age := windowAgeSeconds(c)
+	if age < poolSizingMinWindowS {
+		return 0, 0, false
+	}
+	avgBusy = c.Queries.TotalExecMS / 1000 / float64(age)
+	recommended = int(math.Ceil(avgBusy * 3))
+	if recommended < 8 {
+		recommended = 8
+	}
+	return round2f(avgBusy), recommended, true
+}
+
+func round2f(v float64) float64 { return math.Round(v*100) / 100 }
 
 func settingParam(c *model.Context, name string) string {
 	if c.Settings == nil || c.Settings.Params == nil {
