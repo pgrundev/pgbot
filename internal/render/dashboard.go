@@ -8,9 +8,10 @@ import (
 	"github.com/pgrundev/pgbot/internal/model"
 )
 
-// The default view is a graded, grouped read: a 0–100 health score, then the
-// findings bucketed CRITICAL / WARNING / NOTE, then a GOOD list of the healthy
-// subsystems named with their values. Fast to read top-to-bottom.
+// The default view is a graded, grouped read: a four-row gauge strip of vital
+// signs (gauges.go), the "checked" line naming the subsystems that came back
+// clean, a 0–100 health score, then the findings bucketed CRITICAL / WARNING /
+// NOTE. Fast to read top-to-bottom.
 
 type statusKind int
 
@@ -35,6 +36,15 @@ func statusColor(st styler, k statusKind) func(string) string {
 }
 
 func renderGrouped(b *strings.Builder, st styler, c *model.Context, width int) {
+	// The strip and the checked line infer health from measured signals and
+	// from the ABSENCE of findings — valid only when the checks actually ran. A
+	// schema profile skips the workload/infra collectors, so neither belongs
+	// there; the header already says this is schema-only.
+	if c.Profile != "schema" {
+		renderGauges(b, st, c, width)
+		renderChecked(b, st, buildChecked(c), width)
+	}
+
 	score := computeHealthScore(c)
 	paintScore := st.good
 	switch {
@@ -117,22 +127,8 @@ func renderGrouped(b *strings.Builder, st styler, c *model.Context, width int) {
 		fmt.Fprintln(b)
 	}
 
-	// The GOOD list infers health from the ABSENCE of a finding — valid only when
-	// the check actually ran. A schema profile skips the workload/infra collectors,
-	// so "no blocking locks" there would be a claim about a database it never
-	// examined. Suppress it; the header already says this is schema-only.
-	if c.Profile != "schema" {
-		if good := buildGood(c); len(good) > 0 {
-			fmt.Fprintln(b, st.good("GOOD"))
-			for _, g := range good {
-				fmt.Fprintf(b, "%s %s\n", st.good("●"), st.dim(g))
-			}
-			fmt.Fprintln(b)
-		}
-	}
-
 	fmt.Fprintln(b, st.dim("Details: pgbot inspect --full   ·   Machine-readable: --json"))
-	fmt.Fprintln(b, st.dim(`Ask it: pgbot ask "what's wrong?"`))
+	fmt.Fprintln(b, st.dim(`Ask it: pgbot ask "why is it slow?"`))
 }
 
 // renderSafetyGuards prints a finding's structured destructive-action guards
@@ -210,57 +206,6 @@ func computeHealthScore(c *model.Context) int {
 		s = 0
 	}
 	return s
-}
-
-// buildGood names the subsystems pgbot checked and found healthy, with their
-// values — the "a colleague who looked" signal. Only names things actually
-// examined and clean, capped so the list stays scannable.
-func buildGood(c *model.Context) []string {
-	fired := map[string]bool{}
-	for _, f := range c.Findings {
-		fired[f.ID] = true
-	}
-	var g []string
-	if h := c.Health; h != nil {
-		if h.CacheHitUsable() && !fired["low_cache_hit"] {
-			g = append(g, fmt.Sprintf("cache hit ratio %.1f%%", *h.CacheHitRatio*100))
-		}
-		if h.DeadlocksPerMin != nil && *h.DeadlocksPerMin == 0 {
-			g = append(g, "no deadlocks")
-		}
-	}
-	if c.Locks != nil && c.Locks.BlockedCount == 0 {
-		g = append(g, "no blocking locks")
-	}
-	if r := c.Replication; r != nil {
-		switch {
-		case r.IsReplica:
-			g = append(g, "replication healthy (replica)")
-		case len(r.Replicas) > 0:
-			g = append(g, fmt.Sprintf("replication healthy (%d streaming)", len(r.Replicas)))
-		}
-	}
-	if c.Schema != nil && !fired["index_invalid"] {
-		g = append(g, "no invalid indexes")
-	}
-	if c.Tables != nil && !fired["table_bloat"] {
-		g = append(g, "no significant table bloat")
-	}
-	if c.Limits != nil {
-		if !fired["txid_wraparound"] && c.Limits.MaxXIDAge > 0 {
-			g = append(g, "no wraparound risk")
-		}
-		if !fired["connection_saturation"] && c.Limits.ConnectionsMax > 0 {
-			g = append(g, fmt.Sprintf("connections %d/%d", c.Limits.ConnectionsUsed, c.Limits.ConnectionsMax))
-		}
-	}
-	if c.Queries != nil && c.Queries.Enabled && !fired["pg_stat_statements_missing"] {
-		g = append(g, "query stats available")
-	}
-	if len(g) > 6 {
-		g = g[:6]
-	}
-	return g
 }
 
 // pgLower renders "postgres 16.3" for the header.

@@ -150,8 +150,10 @@ jobs:
     name: build ${{ matrix.goos }}/${{ matrix.goarch }}
     runs-on: ubuntu-latest
     strategy:
+      # Every target .goreleaser.yaml ships — a release must not be the first
+      # thing that compiles a platform.
       matrix:
-        goos: [linux, darwin]
+        goos: [linux, darwin, windows]
         goarch: [amd64, arm64]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -261,6 +263,9 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 20
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.x
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -270,6 +275,8 @@ jobs:
         run: node --test npm/test/*.test.mjs
       # DoD 10: `npm install --ignore-scripts` produces a working install. Builds
       # the real binary, packs the wrapper + this platform's package, installs the
-      # tarballs with --ignore-scripts, and runs `pgbot --version` through it.
-      - name: pack + --ignore-scripts install smoke
-        run: bash npm/test/pack-smoke.sh
+      # tarballs with --ignore-scripts, and runs `pgbot --version` through it —
+      # once per package manager, so a wrapper change that only breaks bun fails
+      # here rather than for a bunx user.
+      - name: pack + --ignore-scripts install smoke (npm, bun)
+        run: bash npm/test/pack-smoke.sh npm bun

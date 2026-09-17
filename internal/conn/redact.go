@@ -30,6 +30,11 @@ var (
 	// (utility statements like DO blocks are stored VERBATIM by pgss, not
 	// normalized, so they can carry real literals).
 	reNumberOrPlaceholder = regexp.MustCompile(`\$\d+|\b\d+(?:\.\d+)?\b`)
+
+	// Connection-string passwords: `?password=…` in a URL's query (libpq accepts
+	// it there as well as in the userinfo) and `password=…` in keyword form.
+	reURLQueryPassword = regexp.MustCompile(`(?i)(^|&)password=[^&]*`)
+	reKeywordPassword  = regexp.MustCompile(`(?i)(password\s*=\s*)('[^']*'|"[^"]*"|\S+)`)
 )
 
 // ScrubQueryText removes literal values from raw SQL so no customer data can
@@ -60,20 +65,20 @@ func ScrubQueryText(sql string) string {
 }
 
 // RedactConnString returns a connection string safe to print in logs, errors,
-// and JSON: the password is replaced with "***". Accepts URL form
-// (postgres://user:pass@host/db) and best-effort keyword form (password=...).
+// and JSON: the password is replaced with "REDACTED". Accepts URL form
+// (postgres://user:pass@host/db, or ?password=… in the query) and best-effort
+// keyword form (password=...).
 func RedactConnString(cs string) string {
 	if cs == "" {
 		return cs
 	}
-	if u, err := url.Parse(cs); err == nil && u.Scheme != "" && u.User != nil {
+	if u, err := url.Parse(cs); err == nil && (u.Scheme == "postgres" || u.Scheme == "postgresql") {
 		if _, hasPw := u.User.Password(); hasPw {
 			u.User = url.UserPassword(u.User.Username(), "REDACTED")
 		}
+		u.RawQuery = reURLQueryPassword.ReplaceAllString(u.RawQuery, "${1}password=REDACTED")
 		return u.String()
 	}
 	// keyword/DSN form: password=secret or password='secret'
-	out := regexp.MustCompile(`(?i)(password\s*=\s*)('[^']*'|"[^"]*"|\S+)`).
-		ReplaceAllString(cs, `${1}REDACTED`)
-	return out
+	return reKeywordPassword.ReplaceAllString(cs, `${1}REDACTED`)
 }

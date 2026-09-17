@@ -138,6 +138,11 @@ func TestRedactConnString(t *testing.T) {
 		"postgresql://u:p%40ss@h/db?sslmode=require": "p%40ss",
 		"host=h user=u password=topsecret dbname=d":  "topsecret",
 		"host=h password='sp ace' dbname=d":          "sp ace",
+		// libpq also takes the password as a query parameter; a username in the
+		// userinfo used to short-circuit past it.
+		"postgres://u@h:5432/db?password=hunter2&sslmode=require": "hunter2",
+		"postgres://h/db?user=u&password=hunter2&sslmode=require": "hunter2",
+		"postgresql://u:p%40ss@h/db?password=hunter2":             "hunter2",
 	}
 	for in, secret := range cases {
 		out := RedactConnString(in)
@@ -154,5 +159,13 @@ func TestRedactConnString_noPasswordIsUnchangedShape(t *testing.T) {
 	out := RedactConnString("postgres://user@host/db")
 	if !strings.Contains(out, "user@host") {
 		t.Errorf("mangled a password-less URL: %q", out)
+	}
+}
+
+func TestRedactConnString_keepsOtherQueryParams(t *testing.T) {
+	in := "postgres://u@h:5432/db?application_name=x&password=hunter2&sslmode=require"
+	want := "postgres://u@h:5432/db?application_name=x&password=REDACTED&sslmode=require"
+	if got := RedactConnString(in); got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
 	}
 }

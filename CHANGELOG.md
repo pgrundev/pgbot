@@ -7,6 +7,19 @@ separately by `model.SchemaVersion` (currently 1.3.0).
 
 ## [Unreleased]
 
+### Changed
+- **Gauge strip in the default `inspect` view.** Four vital signs sit right
+  under the header — cache hit, lock wait (naming the culprit query when
+  sessions are blocked), rollbacks, and idle index bytes as a share of the
+  database — each a bar, a value and a one-word status driven by the finding
+  that grades the same signal. Signals pgbot could not measure render dim
+  with `—` and say why (`thin sample`, `window < 15m`, `not measurable`). The
+  GOOD bullet list becomes a compact `checked · queries · vacuum · …` line of
+  the subsystems that were collected and produced no finding. Score, the
+  CRITICAL/WARNING/NOTE bullets, `--full`, `--json`, MCP, SARIF and the HTML
+  report are unchanged. The footer's ask hint now reads
+  `pgbot ask "why is it slow?"`.
+
 ### Added
 - **`pgbot inspect --all-instances` — every Aurora writer and reader behind one
   endpoint (experimental)** (#23). An Aurora cluster endpoint stands for several
@@ -47,6 +60,13 @@ separately by `model.SchemaVersion` (currently 1.3.0).
 - `model.ServerInfo` gains `instance` and `instance_role` (additive). JSON
   contract `SchemaVersion` → **1.3.0**; a 1.2.0 consumer still parses 1.3.0
   output unchanged.
+### Fixed
+- **Connection-string redaction now covers `?password=` in URL form.** libpq
+  accepts the password as a query parameter as well as in the userinfo; the
+  redactor only handled the latter, so `postgres://user@host/db?password=…`
+  passed through `RedactConnString` untouched. Every caller today hands it an
+  error message that pgx has already redacted, so this closes a gap in the
+  privacy boundary rather than a known leak.
 
 ## [0.8.1] - 2026-09-06
 

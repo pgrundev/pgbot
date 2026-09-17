@@ -9,13 +9,13 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/invopop/jsonschema v0.14.0
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/kevinburke/ssh_config v1.4.0
+	github.com/kevinburke/ssh_config v1.6.0
 	github.com/owenrumney/go-sarif/v2 v2.3.3
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/crypto v0.56.0
-	golang.org/x/sync v0.22.0
+	golang.org/x/sync v0.23.0
 	golang.org/x/term v0.45.0
-	modernc.org/sqlite v1.56.0
+	modernc.org/sqlite v1.57.0
 )
 
 require (
