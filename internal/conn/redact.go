@@ -14,7 +14,8 @@ import (
 // (ScrubQueryText preserves $N placeholders so normalized DML is unharmed.)
 
 var (
-	reSingleQuoted = regexp.MustCompile(`'(?:[^']|'')*'`) // '...' string literals (SQL-escaped '')
+	// '...' string literals (SQL-escaped ''); E'...' also takes backslash escapes.
+	reSingleQuoted = regexp.MustCompile(`\b[Ee]'(?:[^'\\]|\\.|'')*'|'(?:[^']|'')*'`)
 	// Dollar-quoted regions. RE2 has no backreferences, so we match an opening
 	// $tag$ to the NEXT $tag$ non-greedily rather than the same tag — for
 	// well-formed bodies this is exact, and for odd input it over-redacts, which

@@ -169,3 +169,19 @@ func TestRedactConnString_keepsOtherQueryParams(t *testing.T) {
 		t.Errorf("got  %q\nwant %q", got, want)
 	}
 }
+
+// In E'...' strings `\'` is an escaped quote, not the end of the literal.
+func TestScrubQueryText_EStringEscapes(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{`SELECT E'it\'s card for jane.doe' AS x`, `SELECT '?' AS x`},
+		{`SELECT e'a\\' , 'plain'`, `SELECT '?' , '?'`}, // escaped backslash, then the closing quote
+		{`SELECT E'x''y\'z' FROM t`, `SELECT '?' FROM t`},
+		{`SELECT name FROM t WHERE name = 'O''Brien'`, `SELECT name FROM t WHERE name = '?'`},
+		{`SELECT CASE WHEN a THEN 'x' END`, `SELECT CASE WHEN a THEN '?' END`}, // identifier ending in e/E
+	}
+	for _, c := range cases {
+		if got := ScrubQueryText(c.in); got != c.want {
+			t.Errorf("\n in:   %q\n got:  %q\n want: %q", c.in, got, c.want)
+		}
+	}
+}
