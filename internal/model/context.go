@@ -56,6 +56,7 @@ type Context struct {
 	Archiver    *Archiver      `json:"archiver,omitempty"`  // WAL archiving health (A15)
 	Checksums   *Checksums     `json:"checksums,omitempty"` // data-checksum failures cluster-wide (A16)
 	Standby     *StandbyStatus `json:"standby,omitempty"`   // standby-side recovery conflicts (A17)
+	Collation   *Collation     `json:"collation,omitempty"` // collation version drift (PG15+)
 	Deltas      *Deltas        `json:"deltas,omitempty"`    // vs baseline; nil on first run
 	// Set (with Deltas nil) when a stats reset / restart between runs makes any
 	// comparison fiction — e.g. serverless scale-to-zero. See T2.
@@ -458,6 +459,23 @@ type ChecksumFailure struct {
 	Database    string     `json:"database"`
 	Count       int64      `json:"count"`
 	LastFailure *time.Time `json:"last_failure,omitempty"`
+}
+
+// Collation lists this database's catalog objects whose recorded collation
+// version no longer matches what the server's libc/ICU reports now (PG15+): the
+// database default (pg_database.datcollversion) and per-collation entries
+// (pg_collation.collversion). Empty = healthy.
+type Collation struct {
+	Section
+	Mismatches []CollationMismatch `json:"mismatches,omitempty"`
+}
+
+type CollationMismatch struct {
+	Kind     string `json:"kind"`     // database | collation
+	Name     string `json:"name"`     // the database, or schema.collation
+	Provider string `json:"provider"` // libc | icu | builtin
+	Recorded string `json:"recorded_version"`
+	Actual   string `json:"actual_version"` // "" when the library reports none
 }
 
 // Archiver is WAL archiving health from pg_stat_archiver. HasArchiveCommand is

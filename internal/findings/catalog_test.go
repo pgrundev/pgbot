@@ -28,6 +28,12 @@ func TestCatalog_matchesEmitted(t *testing.T) {
 		"checksum_failures": {
 			Checksums: &model.Checksums{Failures: []model.ChecksumFailure{{Database: "app", Count: 3}}},
 		},
+		"collation_version_mismatch": {
+			Server: model.ServerInfo{Database: "app"},
+			Collation: &model.Collation{Mismatches: []model.CollationMismatch{
+				{Kind: "database", Name: "app", Provider: "libc", Recorded: "2.31", Actual: "2.36"},
+			}},
+		},
 		"pgaudit_silent": {
 			Server:   model.ServerInfo{Extensions: []string{"pgaudit"}},
 			Settings: &model.Settings{Params: map[string]string{"pgaudit.log": "none"}},
