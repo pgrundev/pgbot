@@ -10,7 +10,7 @@ import (
 // plan-only or hypothetical operation — none executes the inspected query or
 // writes anything.
 type Planner interface {
-	// GenericPlan returns EXPLAIN (GENERIC_PLAN, FORMAT JSON) <query> as raw JSON.
+	// GenericPlan returns EXPLAIN (GENERIC_PLAN, VERBOSE, FORMAT JSON) <query> as raw JSON.
 	// GENERIC_PLAN (PG16+) plans a normalized $N query without values or execution.
 	GenericPlan(ctx context.Context, query string) ([]byte, error)
 	// CreateHypoIndex creates a hypothetical index from a CREATE INDEX statement

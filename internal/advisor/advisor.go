@@ -133,9 +133,11 @@ func candidatesFromPlan(root planNode) []Candidate {
 		if n.NodeType != "Seq Scan" || n.RelationName == "" || n.Filter == "" {
 			return
 		}
+		// PostgreSQL emits Schema only for a VERBOSE plan. Without it there is
+		// no safe way to distinguish same-named relations resolved by search_path.
 		schema := n.Schema
 		if schema == "" {
-			schema = "public"
+			return
 		}
 		if systemSchemas[schema] {
 			return

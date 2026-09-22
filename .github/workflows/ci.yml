@@ -190,6 +190,10 @@ jobs:
             -c "CREATE TABLE people(id serial primary key, email text);" \
             -c "INSERT INTO people(email) SELECT 'user'||g||'@example.com' FROM generate_series(1,2000) g;" \
             -c "CREATE ROLE pgbot_ro LOGIN PASSWORD 'ro'; GRANT pg_monitor TO pgbot_ro; GRANT CONNECT ON DATABASE postgres TO pgbot_ro;"
+      - name: install HypoPG for the generic-plan advisor fixture
+        if: matrix.pg >= 16
+        run: |
+          docker exec --user root pg sh -eu -c 'apt-get update; apt-get install -y --no-install-recommends postgresql-${{ matrix.pg }}-hypopg'
       - name: run integration suite (full pipeline + PII + rates under load)
         env:
           PGBOT_TEST_DSN: postgres://pgbot_ro:ro@127.0.0.1:5432/postgres
