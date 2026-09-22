@@ -227,7 +227,7 @@ var catalog = map[string]Meta{
 		Related: []string{"autovacuum_off", "vacuum_horizon_blocked", "mxid_wraparound"},
 	},
 	"sequence_exhaustion": {
-		Severity: "warn", CriticalWhen: "a sequence is ≥90% consumed",
+		Severity: "warn", CriticalWhen: "recorded position is ≥90% toward the effective terminal bound",
 		Dimension: "risk", ObjectClass: "relation",
 		Scope:   "workload",
 		Related: []string{"txid_wraparound", "int4_identity_column"},
@@ -540,7 +540,7 @@ var summaries = map[string]string{
 	"wait_lwlock_pressure":         "time spent on lightweight-lock contention (ASH)",
 	"connection_saturation":        "connections approaching max_connections",
 	"txid_wraparound":              "transaction-id age climbing toward the 2.1-billion read-only wall",
-	"sequence_exhaustion":          "a sequence near its ceiling — the next insert will error",
+	"sequence_exhaustion":          "a sequence near its effective terminal bound in the increment direction",
 	"int4_identity_column":         "a sequence-backed int2/int4 column that will wrap (int4 at 2.1B) regardless of current value",
 	"mxid_wraparound":              "multixact-id age climbing toward its own wraparound wall",
 	"vacuum_horizon_blocked":       "something pins the xmin horizon so vacuum can't reclaim",

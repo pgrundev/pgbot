@@ -59,7 +59,7 @@ const (
 	// is a real block on dead-tuple reclamation (not a momentary query).
 	vacuumHorizonWarnXIDs = 1_000_000
 
-	// Sequence exhaustion (last_value / effective ceiling).
+	// Sequence exhaustion (position within effective bounds in increment direction).
 	seqExhaustionWarn = 0.80
 	seqExhaustionCrit = 0.90
 
@@ -1200,17 +1200,22 @@ func txidWraparound(c *model.Context, add func(model.Finding)) {
 	})
 }
 
-// sequenceExhaustion flags a sequence approaching its effective ceiling — the
-// lesser of its max_value and the owning column's integer range. At the ceiling
-// the next nextval() errors: a full write outage. An int4 identity/serial column
-// wraps at 2.1B even if the sequence's own max reads 2^63. DimRisk (top of report).
+// sequenceExhaustion flags a sequence approaching its terminal bound in its
+// increment direction. A cycle wholly inside the effective range is excluded;
+// a cycle narrowed by its owning integer column can still emit an unrepresentable
+// value before or after wrapping. DimRisk (top of report).
 func sequenceExhaustion(c *model.Context, add func(model.Finding)) {
 	if c.Sequences == nil || len(c.Sequences.Items) == 0 {
 		return
 	}
 	var ev, objs []string
 	var worst float64
+	hasDirectionalMetadata := false
 	for _, s := range c.Sequences.Items {
+		legacy := s.Increment == 0
+		if !legacy && s.Cycle && !s.ColumnLimited {
+			continue
+		}
 		if s.PctUsed < seqExhaustionWarn {
 			continue
 		}
@@ -1221,7 +1226,21 @@ func sequenceExhaustion(c *model.Context, add func(model.Finding)) {
 		if s.OwnedBy != "" {
 			owned = " (" + s.OwnedBy + ")"
 		}
-		ev = append(ev, fmt.Sprintf("%s.%s%s: %.0f%% used (%s / %s)", s.Schema, s.Name, owned, s.PctUsed*100, human(s.LastValue), human(s.Ceiling)))
+		if legacy {
+			ev = append(ev, fmt.Sprintf("%s.%s%s: %.0f%% used (%s / %s)", s.Schema, s.Name, owned, s.PctUsed*100, human(s.LastValue), human(s.Ceiling)))
+		} else {
+			hasDirectionalMetadata = true
+			bound, boundName := s.Ceiling, "ceiling"
+			if s.Increment < 0 {
+				bound, boundName = s.Floor, "floor"
+			}
+			qualifier := ""
+			if s.Cycle && s.ColumnLimited {
+				qualifier = ", column-limited cycle"
+			}
+			ev = append(ev, fmt.Sprintf("%s.%s%s: %.0f%% through effective range (%s toward %s %s%s)",
+				s.Schema, s.Name, owned, s.PctUsed*100, human(s.LastValue), boundName, human(bound), qualifier))
+		}
 		objs = append(objs, s.Schema+"."+s.Name)
 	}
 	if len(ev) == 0 {
@@ -1231,14 +1250,24 @@ func sequenceExhaustion(c *model.Context, add func(model.Finding)) {
 	if worst >= seqExhaustionCrit {
 		sev = model.SeverityCritical
 	}
+	detail := "A sequence at its ceiling raises an error on the next nextval() — a write outage for anything that inserts. An int4 identity/serial column wraps at 2.1 billion even when the sequence's own max_value is higher."
+	remediation := "Migrate the owning column to bigint (ALTER TABLE … ALTER COLUMN … TYPE bigint — plan for the table rewrite). If the column is already bigint, exhaustion is astronomically far off."
+	basis := "last_value / min(max_value, column type max)"
+	estimate := fmt.Sprintf("%.0f%% of range used", worst*100)
+	if hasDirectionalMetadata {
+		detail = "The recorded sequence position is near its terminal bound in the increment direction. Non-cycling sequences eventually reject nextval at that bound; cycling sequences remain eligible only when an owning integer column narrows the usable range. Cached last_value is a bounds-position signal, not an exact count of calls remaining."
+		remediation = "Review the sequence bounds, increment, cycle mode, and owning column type. Widen a column-limited owner to bigint (planning for the table rewrite); otherwise plan a wider key or bounds change before the sequence reaches its terminal bound."
+		basis = "direction-aware position within effective sequence and owning-column bounds"
+		estimate = fmt.Sprintf("%.0f%% through effective range", worst*100)
+	}
 	add(model.Finding{
 		ID: "sequence_exhaustion", Severity: sev,
 		Title:       fmt.Sprintf("%d sequence(s) near exhaustion (worst %.0f%%)", len(ev), worst*100),
-		Detail:      "A sequence at its ceiling raises an error on the next nextval() — a write outage for anything that inserts. An int4 identity/serial column wraps at 2.1 billion even when the sequence's own max_value is higher.",
+		Detail:      detail,
 		Evidence:    ev,
 		Objects:     objs,
-		Remediation: "Migrate the owning column to bigint (ALTER TABLE … ALTER COLUMN … TYPE bigint — plan for the table rewrite). If the column is already bigint, exhaustion is astronomically far off.",
-		Impact:      impact(model.DimRisk, worst*100, fmt.Sprintf("%.0f%% of range used", worst*100), "last_value / min(max_value, column type max)"),
+		Remediation: remediation,
+		Impact:      impact(model.DimRisk, worst*100, estimate, basis),
 		Confidence:  0.9,
 		Safety: safety(precondition("narrow_column.table_rewrite", model.ActionAlterColumnType,
 			"ALTER ... TYPE bigint rewrites the whole table under an ACCESS EXCLUSIVE lock.",
