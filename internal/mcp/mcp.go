@@ -89,13 +89,21 @@ const defaultProtocol = "2024-11-05"
 // Serve runs the read-dispatch-write loop until stdin closes. Messages are one
 // JSON object per line; responses go to out. Nothing but protocol goes to out —
 // callers must log to stderr. A failed response write ends the session so no
-// further tools are dispatched after the output transport is lost.
+// further tools are dispatched after the output transport is lost. Cancellation
+// is checked before reads and dispatch; callers must make a blocked Reader
+// interruptible when prompt cancellation is required.
 func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	r := bufio.NewReader(in)
 	w := bufio.NewWriter(out)
 	proto := defaultProtocol
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		line, err := r.ReadBytes('\n')
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		if len(bytes.TrimSpace(line)) > 0 {
 			s.dispatch(ctx, line, w, &proto)
 			if err := w.Flush(); err != nil {

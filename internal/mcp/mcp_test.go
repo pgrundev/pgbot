@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"strings"
 	"testing"
 )
@@ -158,3 +160,78 @@ func TestServe_toolErrorIsResultNotTransportError(t *testing.T) {
 		t.Error("tool failure result should have isError=true")
 	}
 }
+
+func TestServe_preCanceledContextDoesNotDispatch(t *testing.T) {
+	called := false
+	srv := &Server{Name: "pgbot", Version: "test", Tools: []Tool{{
+		Name: "must-not-run", Handler: func(context.Context, json.RawMessage) (string, error) {
+			called = true
+			return "unexpected", nil
+		},
+	}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	in := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"must-not-run"}}` + "\n")
+	var out bytes.Buffer
+
+	err := srv.Serve(ctx, in, &out)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Serve error = %v, want context.Canceled", err)
+	}
+	if called {
+		t.Fatal("tool was dispatched with an already-canceled context")
+	}
+	if out.Len() != 0 {
+		t.Fatalf("canceled request produced output %q", out.String())
+	}
+}
+
+func TestServe_cancellationBetweenBufferedRequestsStopsDispatch(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	secondCalled := false
+	srv := &Server{Name: "pgbot", Version: "test", Tools: []Tool{
+		{
+			Name: "first", Handler: func(context.Context, json.RawMessage) (string, error) {
+				cancel()
+				return "first completed", nil
+			},
+		},
+		{
+			Name: "second", Handler: func(context.Context, json.RawMessage) (string, error) {
+				secondCalled = true
+				return "unexpected", nil
+			},
+		},
+	}}
+	in := strings.NewReader(strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"first"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"second"}}`,
+	}, "\n") + "\n")
+	var out bytes.Buffer
+
+	err := srv.Serve(ctx, in, &out)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Serve error = %v, want context.Canceled", err)
+	}
+	if secondCalled {
+		t.Fatal("second buffered request was dispatched after cancellation")
+	}
+	msgs := decode(t, out.String())
+	if len(msgs) != 1 || msgs[0]["id"] != float64(1) {
+		t.Fatalf("responses = %#v, want only request 1", msgs)
+	}
+}
+
+func TestServe_preservesReadError(t *testing.T) {
+	wantErr := errors.New("read failed")
+	err := testServer().Serve(context.Background(), errorReader{err: wantErr}, io.Discard)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Serve error = %v, want %v", err, wantErr)
+	}
+}
+
+type errorReader struct{ err error }
+
+func (r errorReader) Read([]byte) (int, error) { return 0, r.err }
