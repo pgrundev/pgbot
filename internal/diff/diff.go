@@ -55,7 +55,7 @@ func Compute(now *model.Context, primary *Baseline, _ *Baseline) *model.Deltas {
 // replicaGoneDelta flags a standby that was streaming at the baseline but is
 // absent from pg_stat_replication now — a silent disconnect only history sees.
 func replicaGoneDelta(now, base *model.Context, baseAt time.Time, d *model.Deltas) {
-	if now.Replication == nil || base.Replication == nil {
+	if !replicationObserved(now.Replication) || !replicationObserved(base.Replication) {
 		return
 	}
 	present := map[string]bool{}
@@ -86,7 +86,7 @@ func standbyKey(r model.ReplicaRow) string {
 // point-in-time last_failed_time < last_archived_time comparison misses. Only a
 // genuine increase (not a counter reset going backwards) is reported.
 func archiverFailedDelta(now, base *model.Context, baseAt time.Time, d *model.Deltas) {
-	if now.Archiver == nil || base.Archiver == nil {
+	if !archiverObserved(now.Archiver) || !archiverObserved(base.Archiver) {
 		return
 	}
 	if inc := now.Archiver.FailedCount - base.Archiver.FailedCount; inc > 0 {
@@ -101,14 +101,12 @@ func archiverFailedDelta(now, base *model.Context, baseAt time.Time, d *model.De
 }
 
 func queryDeltas(now, base *model.Context, baseAt time.Time, d *model.Deltas) {
-	if now.Queries == nil || !now.Queries.Enabled {
+	if !queriesObserved(now.Queries) || !queriesObserved(base.Queries) {
 		return
 	}
 	baseByID := map[int64]model.QueryStat{}
-	if base.Queries != nil {
-		for _, q := range base.Queries.Top {
-			baseByID[q.QueryID] = q
-		}
+	for _, q := range base.Queries.Top {
+		baseByID[q.QueryID] = q
 	}
 	for _, q := range now.Queries.Top {
 		prev, seen := baseByID[q.QueryID]
@@ -187,7 +185,7 @@ func dbSizeDelta(now, base *model.Context, baseAt time.Time, d *model.Deltas) {
 }
 
 func connectionDelta(now, base *model.Context, baseAt time.Time, d *model.Deltas) {
-	if now.Health == nil || base.Health == nil {
+	if !connectionsObserved(now.Health) || !connectionsObserved(base.Health) {
 		return
 	}
 	before, after := base.Health.Connections, now.Health.Connections
@@ -205,6 +203,49 @@ func connectionDelta(now, base *model.Context, baseAt time.Time, d *model.Deltas
 			FirstObserved: &at, Note: "connection count stepped",
 		})
 	}
+}
+
+// Older stored contexts can lack exactness. Preserve their positive evidence,
+// but never turn an all-default legacy section into a confidently empty sample.
+func replicationObserved(r *model.Replication) bool {
+	if r == nil || r.Exactness == model.ExactnessUnavailable {
+		return false
+	}
+	return r.Exactness != "" || r.IsReplica || r.ReceiverLagSec != nil ||
+		len(r.Replicas) > 0 || len(r.Slots) > 0 || len(r.Subscriptions) > 0
+}
+
+func archiverObserved(a *model.Archiver) bool {
+	if a == nil || a.Exactness == model.ExactnessUnavailable {
+		return false
+	}
+	return a.Exactness != "" || a.ArchivedCount != 0 || a.LastArchivedWAL != "" ||
+		a.LastArchivedTime != nil || a.FailedCount != 0 || a.LastFailedWAL != "" ||
+		a.LastFailedTime != nil || a.StatsReset != nil || a.HasArchiveCommand
+}
+
+func queriesObserved(q *model.Queries) bool {
+	if q == nil || !q.Enabled || q.Exactness == model.ExactnessUnavailable {
+		return false
+	}
+	return q.Exactness != "" || q.TotalExecMS != 0 || q.PgssDealloc != 0 ||
+		q.PgssCount != 0 || q.PgssMax != 0 || len(q.Top) > 0
+}
+
+func connectionsObserved(h *model.Health) bool {
+	if h == nil {
+		return false
+	}
+	if h.Connections > 0 {
+		return true
+	}
+	if h.Exactness == model.ExactnessUnavailable {
+		return false
+	}
+	return h.Exactness != "" || h.TPS != nil || h.CommitsPerSec != nil ||
+		h.RollbacksPerSec != nil || h.RollbackRatio != nil || h.CacheHitRatio != nil ||
+		h.CacheBlocks != nil || h.DeadlocksPerMin != nil || h.TempBytesPerSec != nil ||
+		h.TupReturnedPerS != nil || h.TupWrittenPerS != nil
 }
 
 func deadRatioDelta(now, base *model.Context, baseAt time.Time, d *model.Deltas) {
