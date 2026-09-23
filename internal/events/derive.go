@@ -79,7 +79,7 @@ func schemaEvents(prev, cur []model.SchemaObject, window func(model.Event) model
 }
 
 func configEvents(prev, cur map[string]string, window func(model.Event) model.Event) []model.Event {
-	if len(prev) == 0 {
+	if prev == nil || cur == nil {
 		return nil
 	}
 	var out []model.Event
