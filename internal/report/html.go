@@ -73,7 +73,7 @@ func Render(c *model.Context, score int, version string) string {
 		addNav("findings", "Findings")
 		body.section("findings", "Findings")
 		fs := append([]model.Finding(nil), c.Findings...)
-		order := map[string]int{"critical": 0, "warning": 1, "info": 2}
+		order := map[string]int{model.SeverityCritical: 0, model.SeverityWarn: 1, model.SeverityInfo: 2}
 		sort.SliceStable(fs, func(i, j int) bool { return order[fs[i].Severity] < order[fs[j].Severity] })
 		for _, f := range fs {
 			cls := f.Severity
