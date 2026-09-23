@@ -14,6 +14,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var gatherQueryContext = gather
+
+const queryStatsReadFailed = "pg_stat_statements read failed"
+
 // newQueriesCmd — `pgbot queries`. The top statements from pg_stat_statements,
 // ranked by total execution time (the query quietly eating the database) or by
 // call count with --by-calls (a cheap query run a million times). Read-only.
@@ -47,7 +51,7 @@ func runQueries(cmd *cobra.Command, args []string, f inspectFlags, byCalls bool)
 	ctx, cancel := context.WithTimeout(cmd.Context(), f.timeout)
 	defer cancel()
 
-	c, host, err := gather(ctx, connString, f)
+	c, host, err := gatherQueryContext(ctx, connString, f)
 	if err != nil {
 		return err
 	}
@@ -55,14 +59,20 @@ func runQueries(cmd *cobra.Command, args []string, f inspectFlags, byCalls bool)
 		host = c.Server.Database
 	}
 	st := render.NewStyler(useColor(f.noColor))
+	out := cmd.OutOrStdout()
 
 	if c.Queries == nil || !c.Queries.Enabled {
 		reason := "pg_stat_statements not enabled"
 		if c.Queries != nil && c.Queries.Reason != "" {
 			reason = c.Queries.Reason
 		}
-		fmt.Println(st.Warn("pg_stat_statements is required for query stats."))
-		fmt.Println(st.Dim("  " + reason))
+		fmt.Fprintln(out, st.Warn("pg_stat_statements is required for query stats."))
+		fmt.Fprintln(out, st.Dim("  "+reason))
+		return nil
+	}
+	if c.Queries.Exactness == model.ExactnessUnavailable {
+		fmt.Fprintln(out, st.Warn("Query stats are unavailable."))
+		fmt.Fprintln(out, st.Dim("  "+queryStatsReadFailed))
 		return nil
 	}
 
@@ -73,8 +83,8 @@ func runQueries(cmd *cobra.Command, args []string, f inspectFlags, byCalls bool)
 		label = "by call count"
 	}
 
-	fmt.Printf("%s · %s · top %d queries %s\n\n", st.Head(host), pgVersionShort(c.Server.VersionNum), len(top), st.Dim(label))
-	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+	fmt.Fprintf(out, "%s · %s · top %d queries %s\n\n", st.Head(host), pgVersionShort(c.Server.VersionNum), len(top), st.Dim(label))
+	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, "  total\tshare\tcalls\tmean\tquery")
 	for _, q := range top {
 		share := "—"
@@ -85,8 +95,8 @@ func runQueries(cmd *cobra.Command, args []string, f inspectFlags, byCalls bool)
 			durFromMs(q.TotalMS), share, humanCount(q.Calls), q.MeanMS, truncStr(q.Query, 60))
 	}
 	tw.Flush()
-	fmt.Println()
-	fmt.Println(st.Dim("share = % of total execution time across all statements. `pgbot inspect --json` for the full set."))
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, st.Dim("share = % of total execution time across all statements. `pgbot inspect --json` for the full set."))
 	return nil
 }
 

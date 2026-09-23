@@ -181,6 +181,10 @@ total execution time (the query quietly eating your database) with a `share`
 column for each query's slice of total time. Add `--by-calls` to rank by call
 count instead — a cheap query run a million times can outweigh an expensive one
 run twice. Transaction-control and session-`SET` noise is filtered out.
+An enabled extension whose statistics could not be read is reported as unavailable,
+not as an empty workload. The MCP `top_queries` response preserves `enabled` and
+adds `available` to distinguish those states; a successful empty workload has
+`enabled: true`, `available: true`, and an empty `queries` array.
 
 ```
 $ pgbot queries "$DATABASE_URL"
