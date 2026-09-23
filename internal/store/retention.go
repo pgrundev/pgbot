@@ -128,14 +128,20 @@ type scalars struct {
 func extractScalars(c *model.Context) scalars {
 	var sc scalars
 	if c.Health != nil {
-		sc.tps = c.Health.TPS
-		sc.cacheHit = c.Health.CacheHitRatio
-		if c.Health.Connections > 0 {
+		if c.Health.Exactness != model.ExactnessUnavailable {
+			sc.tps = c.Health.TPS
+			sc.cacheHit = c.Health.CacheHitRatio
+		}
+		// Counter resets can invalidate rates without losing the current
+		// connection gauge. A positive count is still observed in that case.
+		// Zero needs availability metadata; legacy/unavailable zero is unknown.
+		knownZero := c.Health.Connections == 0 && c.Health.Exactness != "" && c.Health.Exactness != model.ExactnessUnavailable
+		if c.Health.Connections > 0 || knownZero {
 			n := int64(c.Health.Connections)
 			sc.connections = &n
 		}
 	}
-	if c.Tables != nil {
+	if c.Tables != nil && c.Tables.Exactness != model.ExactnessUnavailable {
 		sc.dbSize = &c.Tables.DBSizeBytes
 		var maxDead float64
 		for _, t := range c.Tables.Top {
@@ -145,7 +151,7 @@ func extractScalars(c *model.Context) scalars {
 		}
 		sc.deadRatioMax = &maxDead
 	}
-	if c.Activity != nil {
+	if c.Activity != nil && c.Activity.Exactness != model.ExactnessUnavailable {
 		v := c.Activity.LongestXactSec
 		sc.longestXact = &v
 	}
