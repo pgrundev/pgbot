@@ -257,6 +257,7 @@ type Activity struct {
 	ByState             map[string]int `json:"by_state"`
 	WaitEvents          map[string]int `json:"wait_events,omitempty"`
 	LongestXactSec      float64        `json:"longest_xact_sec"`
+	LongestIdleXactSec  *float64       `json:"longest_idle_xact_sec,omitempty"`
 	LongestActiveSec    float64        `json:"longest_active_sec"`
 	Connections         []ConnGroup    `json:"connections,omitempty"`            // top contributors by app/user/state (A13)
 	AutovacuumWorkers   int            `json:"autovacuum_workers,omitempty"`     // running autovacuum workers (A19)

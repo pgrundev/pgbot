@@ -1029,9 +1029,14 @@ func idleInTransaction(c *model.Context, add func(model.Finding)) {
 	}
 	sevr := model.SeverityInfo
 	score := 30.0
-	if c.Activity.LongestXactSec >= idleInTxnWarnSec {
+	age := c.Activity.LongestIdleXactSec
+	if age != nil && *age >= idleInTxnWarnSec {
 		sevr = model.SeverityWarn
-		score = math.Min(80, 50+c.Activity.LongestXactSec/30)
+		score = math.Min(80, 50+*age/30)
+	}
+	estimate := fmt.Sprintf("%d session(s), idle transaction age not measured", c.Activity.IdleInTransaction)
+	if age != nil {
+		estimate = fmt.Sprintf("%d session(s), longest idle transaction %.0fs", c.Activity.IdleInTransaction, *age)
 	}
 	add(model.Finding{
 		ID: "idle_in_transaction", Severity: sevr,
@@ -1039,7 +1044,7 @@ func idleInTransaction(c *model.Context, add func(model.Finding)) {
 		Detail:      "Idle-in-transaction sessions hold locks and pin the xmin horizon, blocking vacuum. Long-lived ones are a common source of bloat and lock waits.",
 		Remediation: "Find the session and fix the app's transaction handling; consider idle_in_transaction_session_timeout.",
 		Impact: impact(model.DimRisk, score,
-			fmt.Sprintf("%d session(s), longest %.0fs", c.Activity.IdleInTransaction, c.Activity.LongestXactSec),
+			estimate,
 			"pg_stat_activity idle-in-transaction count + age"),
 		Confidence: 0.7,
 	})

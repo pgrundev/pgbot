@@ -86,6 +86,10 @@ func (activityCollector) Assemble(c *model.Context, _ conn.Capabilities, s sampl
 			act.Idle += r.N
 		case "idle in transaction", "idle in transaction (aborted)":
 			act.IdleInTransaction += r.N
+			if act.LongestIdleXactSec == nil || r.MaxXactAgeS > *act.LongestIdleXactSec {
+				age := round2(r.MaxXactAgeS)
+				act.LongestIdleXactSec = &age
+			}
 		}
 		if r.WaitEventType != "" {
 			act.WaitEvents[r.WaitEventType] += r.N
