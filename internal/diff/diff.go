@@ -33,9 +33,14 @@ const (
 
 // Compute compares now against the primary baseline (yesterday is accepted for
 // FirstObserved dating but the primary drives the changes). Returns nil when
-// there's nothing to compare against.
+// there's nothing to compare against or the statistics reset between snapshots.
 func Compute(now *model.Context, primary *Baseline, _ *Baseline) *model.Deltas {
 	if primary == nil || primary.Context == nil {
+		return nil
+	}
+	// Keep every consumer consistent with the baseline suppression contract.
+	// A reset is an unavailable comparison, not an improvement in counters.
+	if StatsResetBetween(primary.Context, now) != "" {
 		return nil
 	}
 	d := &model.Deltas{Against: primary.CollectedAt, Changes: []model.Delta{}}

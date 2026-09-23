@@ -52,8 +52,9 @@ func DiffReport(w io.Writer, in DiffInput) {
 	// (2) Reset / eviction suppression, reused from the same logic inspect uses.
 	if in.ResetReason != "" {
 		fmt.Fprintln(&b, st.crit("⚠ statistics were reset between these snapshots — "+in.ResetReason))
-		fmt.Fprintln(&b, st.dim("  Cumulative deltas are meaningless across a reset; only same-moment gauges below are trustworthy."))
-		fmt.Fprintln(&b)
+		fmt.Fprintln(&b, st.dim("  Comparison unavailable: statistics were reset or the server restarted between snapshots."))
+		_, _ = io.WriteString(w, b.String())
+		return
 	}
 	if in.PgssEvicted {
 		fmt.Fprintln(&b, st.warn("⚠ pg_stat_statements evicted entries between these snapshots — query-level deltas may be incomplete"))
