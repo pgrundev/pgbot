@@ -86,3 +86,22 @@ func TestQueryMean_belowAbsoluteThresholdIgnored(t *testing.T) {
 		t.Error("a change under the 5ms absolute floor must not fire")
 	}
 }
+
+func TestReplicaGone_detectsCardinalityDropForSharedApplicationName(t *testing.T) {
+	base := &model.Context{Replication: &model.Replication{Replicas: []model.ReplicaRow{
+		{AppName: "walreceiver", ClientAddr: "10.0.0.11"},
+		{AppName: "walreceiver", ClientAddr: "10.0.0.12"},
+	}}}
+	now := &model.Context{Replication: &model.Replication{Replicas: []model.ReplicaRow{
+		{AppName: "walreceiver", ClientAddr: "10.0.0.11"},
+	}}}
+
+	d := Compute(now, &Baseline{Context: base}, nil)
+	c := change(d, "replication.standby_gone")
+	if c == nil {
+		t.Fatal("a 2-to-1 standby count drop must be reported even when application_name is shared")
+	}
+	if c.Subject != "walreceiver" || c.Before != 2 || c.After != 1 {
+		t.Fatalf("standby cardinality delta = %+v, want walreceiver 2 -> 1", c)
+	}
+}

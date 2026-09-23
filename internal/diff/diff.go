@@ -58,17 +58,27 @@ func replicaGoneDelta(now, base *model.Context, baseAt time.Time, d *model.Delta
 	if now.Replication == nil || base.Replication == nil {
 		return
 	}
-	present := map[string]bool{}
+	present := map[string]int{}
 	for _, r := range now.Replication.Replicas {
-		present[standbyKey(r)] = true
+		if k := standbyKey(r); k != "" {
+			present[k]++
+		}
 	}
+	previous := map[string]int{}
 	for _, r := range base.Replication.Replicas {
-		if k := standbyKey(r); k != "" && !present[k] {
+		if k := standbyKey(r); k != "" {
+			previous[k]++
+		}
+	}
+	reported := map[string]bool{}
+	for _, r := range base.Replication.Replicas {
+		if k := standbyKey(r); k != "" && !reported[k] && present[k] < previous[k] {
+			reported[k] = true
 			at := baseAt
 			d.Changes = append(d.Changes, model.Delta{
 				ID: "replication.standby_gone", Subject: k, Severity: model.SeverityWarn,
-				Before: 1, After: 0, FirstObserved: &at,
-				Note: "a standby present at the last run is no longer connected",
+				Before: float64(previous[k]), After: float64(present[k]), FirstObserved: &at,
+				Note: "one or more standbys present at the last run are no longer connected",
 			})
 		}
 	}
