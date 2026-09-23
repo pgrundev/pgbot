@@ -22,6 +22,26 @@ type LiveReport struct {
 	Study       *model.WaitStudy `json:"study,omitempty"`
 }
 
+// ioVerdict turns the window's pg_stat_io reading into one evidence line and a
+// storage-bound flag. Needs track_io_timing and enough reads for the mean to
+// hold (ioVerdictMinReads); otherwise it says what is missing.
+func ioVerdict(io *model.IOStats) (line string, storage bool) {
+	if io == nil || io.Exactness != model.ExactnessSampled {
+		return "", false
+	}
+	if !io.TrackIOTiming {
+		return "pg_stat_io: track_io_timing is off, so per-read latency is unknown — turn it on (a reload) to tell device waits from cache misses.", false
+	}
+	if io.ReadLatencyMS == nil || io.ReadsInWindow < ioVerdictMinReads {
+		return fmt.Sprintf("pg_stat_io: only %d physical reads in the window — too few to judge storage latency.", io.ReadsInWindow), false
+	}
+	lat := *io.ReadLatencyMS
+	if lat >= ioVerdictStorageMS {
+		return fmt.Sprintf("pg_stat_io: %d physical reads averaged %.2f ms each — the device (or volume latency floor), not the page cache, served them.", io.ReadsInWindow, lat), true
+	}
+	return fmt.Sprintf("pg_stat_io: %d physical reads averaged %.2f ms each — served from the kernel page cache; the cost is block volume, not device latency.", io.ReadsInWindow, lat), false
+}
+
 // HistShares is a baseline wait-class distribution from the local store's
 // rollups — a separate window, compared by ratio, never blended into the live
 // percentages.
@@ -37,6 +57,8 @@ const (
 	liveAASFloor       = 0.5
 	liveLockShareBar   = 0.40
 	liveIOShareBar     = 0.40
+	ioVerdictMinReads  = 500 // reads in the window before a mean latency means anything
+	ioVerdictStorageMS = 1.0 // ≥ 1 ms per read is a device, not the page cache
 	liveClientShareBar = 0.50
 	liveCPUShareBar    = 0.60
 	histMinSamples     = 100
@@ -114,6 +136,16 @@ func ClassifyLive(s *model.WaitStudy, hist *HistShares) *LiveReport {
 		r.Headline = "storage/WAL wait"
 		r.Evidence = append(r.Evidence,
 			fmt.Sprintf("%.0f%% of sampled time reading or writing data — IO wait alone does not identify a cause like an absent index.", share["IO"]*100))
+		if line, storage := ioVerdict(s.IO); line != "" {
+			r.Evidence = append(r.Evidence, line)
+			if storage {
+				r.Confidence = 0.7
+				r.Headline = "storage latency — physical reads wait on the device"
+				r.NextCheck = "reads are slow per block, not just many: cut blocks read first (top queries by shared_blks_read, indexes, bloat), then working set vs shared_buffers, then effective_io_concurrency / io_method / volume class"
+			} else {
+				r.NextCheck = "reads were served in microseconds (kernel page cache), so the IO time is volume, not device latency: find the query reading the most blocks — `pgbot queries`, then `pgbot advise`"
+			}
+		}
 		for _, q := range s.Profile.ByQuery {
 			if q.Share >= ioQueryShareBar && q.IOShare >= ioQueryIOBar {
 				r.NextCheck = "one query dominates the IO samples — `pgbot advise` can check indexes with planner validation"

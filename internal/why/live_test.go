@@ -144,3 +144,40 @@ func TestClassifyLiveSource(t *testing.T) {
 		t.Errorf("source label missing: %+v", r)
 	}
 }
+
+func TestIOVerdict(t *testing.T) {
+	sampled := model.Section{Exactness: model.ExactnessSampled}
+	f := func(v float64) *float64 { return &v }
+	cases := []struct {
+		name    string
+		io      *model.IOStats
+		want    string
+		storage bool
+	}{
+		{"nil", nil, "", false},
+		{"timing off", &model.IOStats{Section: sampled, TrackIOTiming: false}, "track_io_timing is off", false},
+		{"too few reads", &model.IOStats{Section: sampled, TrackIOTiming: true, ReadLatencyMS: f(9), ReadsInWindow: 12}, "too few", false},
+		{"device", &model.IOStats{Section: sampled, TrackIOTiming: true, ReadLatencyMS: f(3.5), ReadsInWindow: 2000}, "the device", true},
+		{"page cache", &model.IOStats{Section: sampled, TrackIOTiming: true, ReadLatencyMS: f(0.03), ReadsInWindow: 2000}, "kernel page cache", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			line, storage := ioVerdict(tc.io)
+			if storage != tc.storage || !strings.Contains(line, tc.want) {
+				t.Fatalf("want (%q, %v), got (%q, %v)", tc.want, tc.storage, line, storage)
+			}
+		})
+	}
+}
+
+func TestClassifyLive_storageVerdictRaisesConfidence(t *testing.T) {
+	s := study(3, bucket("IO", 70, 100), bucket("CPU", 30, 100))
+	s.IO = &model.IOStats{Section: model.Section{Exactness: model.ExactnessSampled}, TrackIOTiming: true, ReadLatencyMS: func() *float64 { v := 6.0; return &v }(), ReadsInWindow: 3000}
+	r := ClassifyLive(s, nil)
+	if r.Cause != "storage_wait" || r.Confidence != 0.7 || !strings.Contains(r.Headline, "storage latency") {
+		t.Fatalf("device latency should sharpen the storage verdict, got %+v", r)
+	}
+	if !strings.Contains(r.NextCheck, "cut blocks read first") {
+		t.Errorf("next check should order the fixes, got %q", r.NextCheck)
+	}
+}

@@ -41,6 +41,7 @@ Lost durability, corruption, wraparound, replication — things that end in an o
 - **[txid_wraparound](txid_wraparound.md)** · Warn — transaction-id age climbing toward the 2.1-billion read-only wall
 - **[work_mem_overcommit](work_mem_overcommit.md)** · Warn — work_mem × max_connections exceeds effective_cache_size — OOM risk
 - **[checksums_disabled](checksums_disabled.md)** · Info — data checksums are off, so this class of corruption is silent
+- **[slot_wal_keep_unbounded](slot_wal_keep_unbounded.md)** · Info — max_slot_wal_keep_size = -1 with replication slots present — a stalled consumer can fill the disk
 - **[statement_timeout_unset](statement_timeout_unset.md)** · Info — no cluster-wide statement_timeout — a runaway query can run forever
 
 ## Storage
@@ -51,6 +52,7 @@ Disk wasted by bloat, dead tuples, and indexes that earn nothing.
 - **[table_bloat](table_bloat.md)** · Warn — dead tuples make a table far larger on disk than its live rows
 - **[unused_indexes](unused_indexes.md)** · Warn — indexes with zero scans — storage and write cost, no reads served
 - **[vacuum_horizon_blocked](vacuum_horizon_blocked.md)** · Warn — something pins the xmin horizon so vacuum can't reclaim
+- **[autovacuum_table_tuning](autovacuum_table_tuning.md)** · Info — a large write-active table on the global 20% scale factor — millions of dead rows before autovacuum starts
 - **[redundant_indexes](redundant_indexes.md)** · Info — an index whose columns are a leading prefix of another
 
 ## Latency
@@ -58,12 +60,15 @@ Disk wasted by bloat, dead tuples, and indexes that earn nothing.
 Individual queries made slow by missing indexes or stale plans.
 
 - **[fk_unindexed](fk_unindexed.md)** · Warn — a foreign key with no index — slow joins and cascade checks
+- **[io_read_latency_high](io_read_latency_high.md)** · Warn — physical reads take milliseconds each — the working set is on the device, not in memory
 - **[never_analyzed](never_analyzed.md)** · Warn — a table with no statistics at all — the planner guesses
 - **[partition_seq_scan_heavy](partition_seq_scan_heavy.md)** · Warn — a partitioned table read end-to-end across its partitions
 - **[query_slowdown](query_slowdown.md)** · Warn — a query's mean time regressed sharply versus the baseline
 - **[random_page_cost_high](random_page_cost_high.md)** · Warn — random_page_cost tuned for spinning disks on SSD storage
 - **[stale_statistics](stale_statistics.md)** · Warn — planner statistics far behind the data — the usual cause of a plan flip
 - **[wait_lock_contention](wait_lock_contention.md)** · Warn — time spent waiting on heavyweight locks (ASH)
+- **[io_concurrency_low](io_concurrency_low.md)** · Info — effective_io_concurrency ≤ 1 on SSD-backed storage — scans read one block at a time
+- **[plan_cache_mode_forced](plan_cache_mode_forced.md)** · Info — plan_cache_mode pinned cluster-wide — prepared statements can't switch generic/custom plans
 
 ## Throughput
 
@@ -81,6 +86,7 @@ Whole-database capacity lost to waits, cache misses, and write amplification.
 - **[work_mem_low](work_mem_low.md)** · Warn — queries spill sorts/hashes to temp files — work_mem too small
 - **[autovacuum_long_running](autovacuum_long_running.md)** · Info — an autovacuum worker has been running over an hour
 - **[io_timing_off](io_timing_off.md)** · Info — track_io_timing off, so per-query IO time is unavailable
+- **[partition_skew](partition_skew.md)** · Info — one partition takes most of the scans or rows — the partition key has a hot value
 - **[pgaudit_double_logging](pgaudit_double_logging.md)** · Info — pgaudit and log_statement=all record every statement twice — duplicate log volume
 
 ## Cost & visibility

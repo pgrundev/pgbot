@@ -1,0 +1,1790 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pgbot.dev/schema/pgbot-context-1.4.0.json",
+  "$ref": "#/$defs/Context",
+  "$defs": {
+    "Activity": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "total": {
+          "type": "integer"
+        },
+        "active": {
+          "type": "integer"
+        },
+        "idle": {
+          "type": "integer"
+        },
+        "idle_in_transaction": {
+          "type": "integer"
+        },
+        "waiting": {
+          "type": "integer"
+        },
+        "by_state": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "wait_events": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "longest_xact_sec": {
+          "type": "number"
+        },
+        "longest_active_sec": {
+          "type": "number"
+        },
+        "connections": {
+          "items": {
+            "$ref": "#/$defs/ConnGroup"
+          },
+          "type": "array"
+        },
+        "autovacuum_workers": {
+          "type": "integer"
+        },
+        "autovacuum_max_age_sec": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "total",
+        "active",
+        "idle",
+        "idle_in_transaction",
+        "waiting",
+        "by_state",
+        "longest_xact_sec",
+        "longest_active_sec"
+      ]
+    },
+    "Archiver": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "archived_count": {
+          "type": "integer"
+        },
+        "last_archived_wal": {
+          "type": "string"
+        },
+        "last_archived_time": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "failed_count": {
+          "type": "integer"
+        },
+        "last_failed_wal": {
+          "type": "string"
+        },
+        "last_failed_time": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "stats_reset": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "has_archive_command": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "archived_count",
+        "failed_count",
+        "has_archive_command"
+      ]
+    },
+    "BlockingRow": {
+      "properties": {
+        "blocked_pid": {
+          "type": "integer"
+        },
+        "blocking_pids": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "wait_event": {
+          "type": "string"
+        },
+        "wait_seconds": {
+          "type": "number"
+        },
+        "blocked_query": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "blocked_pid",
+        "blocking_pids",
+        "wait_seconds",
+        "blocked_query"
+      ]
+    },
+    "ChecksumFailure": {
+      "properties": {
+        "database": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer"
+        },
+        "last_failure": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "database",
+        "count"
+      ]
+    },
+    "Checksums": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "failures": {
+          "items": {
+            "$ref": "#/$defs/ChecksumFailure"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness"
+      ]
+    },
+    "ConnGroup": {
+      "properties": {
+        "app_name": {
+          "type": "string"
+        },
+        "user": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "app_name",
+        "user",
+        "state",
+        "count"
+      ]
+    },
+    "Context": {
+      "properties": {
+        "schema_version": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "collected_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "fingerprint": {
+          "type": "string"
+        },
+        "server": {
+          "$ref": "#/$defs/ServerInfo"
+        },
+        "window": {
+          "$ref": "#/$defs/Window"
+        },
+        "health": {
+          "$ref": "#/$defs/Health"
+        },
+        "activity": {
+          "$ref": "#/$defs/Activity"
+        },
+        "locks": {
+          "$ref": "#/$defs/Locks"
+        },
+        "queries": {
+          "$ref": "#/$defs/Queries"
+        },
+        "tables": {
+          "$ref": "#/$defs/Tables"
+        },
+        "indexes": {
+          "$ref": "#/$defs/Indexes"
+        },
+        "wal": {
+          "$ref": "#/$defs/WAL"
+        },
+        "io": {
+          "$ref": "#/$defs/IO"
+        },
+        "io_stats": {
+          "$ref": "#/$defs/IOStats"
+        },
+        "replication": {
+          "$ref": "#/$defs/Replication"
+        },
+        "settings": {
+          "$ref": "#/$defs/Settings"
+        },
+        "limits": {
+          "$ref": "#/$defs/Limits"
+        },
+        "horizon": {
+          "$ref": "#/$defs/VacuumHorizon"
+        },
+        "sequences": {
+          "$ref": "#/$defs/Sequences"
+        },
+        "progress": {
+          "$ref": "#/$defs/Progress"
+        },
+        "archiver": {
+          "$ref": "#/$defs/Archiver"
+        },
+        "checksums": {
+          "$ref": "#/$defs/Checksums"
+        },
+        "standby": {
+          "$ref": "#/$defs/StandbyStatus"
+        },
+        "deltas": {
+          "$ref": "#/$defs/Deltas"
+        },
+        "delta_suppressed_reason": {
+          "type": "string"
+        },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/Event"
+          },
+          "type": "array"
+        },
+        "wait_profile": {
+          "$ref": "#/$defs/WaitProfile"
+        },
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/Finding"
+          },
+          "type": "array"
+        },
+        "config_warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "collected_at",
+        "fingerprint",
+        "server",
+        "window",
+        "findings"
+      ]
+    },
+    "Delta": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "severity": {
+          "type": "string"
+        },
+        "before": {
+          "type": "number"
+        },
+        "after": {
+          "type": "number"
+        },
+        "pct_change": {
+          "type": "number"
+        },
+        "first_observed": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id",
+        "subject",
+        "severity",
+        "before",
+        "after"
+      ]
+    },
+    "Deltas": {
+      "properties": {
+        "against": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "yesterday_hour": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "changes": {
+          "items": {
+            "$ref": "#/$defs/Delta"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "against",
+        "changes"
+      ]
+    },
+    "Event": {
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "object": {
+          "type": "string"
+        },
+        "before": {
+          "type": "string"
+        },
+        "after": {
+          "type": "string"
+        },
+        "occurred_after": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "occurred_before": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "confidence": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "confidence"
+      ]
+    },
+    "Finding": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "object": {
+          "type": "string"
+        },
+        "severity": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "objects": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "remediation": {
+          "type": "string"
+        },
+        "impact": {
+          "$ref": "#/$defs/Impact"
+        },
+        "confidence": {
+          "type": "number"
+        },
+        "caveats": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "related": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "safety": {
+          "$ref": "#/$defs/Safety"
+        },
+        "suppressed": {
+          "type": "boolean"
+        },
+        "suppression_reason": {
+          "type": "string"
+        },
+        "suppression_rule": {
+          "type": "string"
+        },
+        "severity_remapped": {
+          "type": "string"
+        },
+        "cluster_scoped": {
+          "type": "boolean"
+        },
+        "preexisting": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id",
+        "severity",
+        "title",
+        "detail",
+        "impact",
+        "confidence"
+      ]
+    },
+    "Health": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "connections": {
+          "type": "integer"
+        },
+        "tps": {
+          "type": "number"
+        },
+        "commits_per_sec": {
+          "type": "number"
+        },
+        "rollbacks_per_sec": {
+          "type": "number"
+        },
+        "rollback_ratio": {
+          "type": "number"
+        },
+        "cache_hit_ratio": {
+          "type": "number"
+        },
+        "cache_blocks_sampled": {
+          "type": "integer"
+        },
+        "deadlocks_per_min": {
+          "type": "number"
+        },
+        "temp_bytes_per_sec": {
+          "type": "number"
+        },
+        "tuples_returned_per_sec": {
+          "type": "number"
+        },
+        "tuples_written_per_sec": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "connections"
+      ]
+    },
+    "HorizonHolder": {
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "holder": {
+          "type": "string"
+        },
+        "xmin_age": {
+          "type": "integer"
+        },
+        "age_s": {
+          "type": "number"
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "source",
+        "holder",
+        "xmin_age"
+      ]
+    },
+    "IO": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "checkpoints_timed": {
+          "type": "integer"
+        },
+        "checkpoints_requested": {
+          "type": "integer"
+        },
+        "buffers_written_per_sec": {
+          "type": "number"
+        },
+        "backend_fsyncs": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "checkpoints_timed",
+        "checkpoints_requested",
+        "backend_fsyncs"
+      ]
+    },
+    "IOStatRow": {
+      "properties": {
+        "backend_type": {
+          "type": "string"
+        },
+        "object": {
+          "type": "string"
+        },
+        "context": {
+          "type": "string"
+        },
+        "reads_per_sec": {
+          "type": "number"
+        },
+        "writes_per_sec": {
+          "type": "number"
+        },
+        "fsyncs_per_sec": {
+          "type": "number"
+        },
+        "read_latency_ms": {
+          "type": "number"
+        },
+        "write_latency_ms": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "backend_type",
+        "object",
+        "context",
+        "reads_per_sec",
+        "writes_per_sec",
+        "fsyncs_per_sec"
+      ]
+    },
+    "IOStats": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "track_io_timing": {
+          "type": "boolean"
+        },
+        "reads_per_sec": {
+          "type": "number"
+        },
+        "writes_per_sec": {
+          "type": "number"
+        },
+        "fsyncs_per_sec": {
+          "type": "number"
+        },
+        "read_latency_ms": {
+          "type": "number"
+        },
+        "write_latency_ms": {
+          "type": "number"
+        },
+        "fsync_latency_ms": {
+          "type": "number"
+        },
+        "reads_in_window": {
+          "type": "integer"
+        },
+        "rows": {
+          "items": {
+            "$ref": "#/$defs/IOStatRow"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "track_io_timing",
+        "reads_in_window"
+      ]
+    },
+    "Impact": {
+      "properties": {
+        "score": {
+          "type": "number"
+        },
+        "dimension": {
+          "type": "string"
+        },
+        "estimate": {
+          "type": "string"
+        },
+        "basis": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "score",
+        "dimension",
+        "estimate",
+        "basis"
+      ]
+    },
+    "IndexStat": {
+      "properties": {
+        "schema": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "index": {
+          "type": "string"
+        },
+        "scans": {
+          "type": "integer"
+        },
+        "bytes": {
+          "type": "integer"
+        },
+        "definition": {
+          "type": "string"
+        },
+        "columns": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "method": {
+          "type": "string"
+        },
+        "unique": {
+          "type": "boolean"
+        },
+        "primary": {
+          "type": "boolean"
+        },
+        "partial": {
+          "type": "boolean"
+        },
+        "expression": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema",
+        "table",
+        "index",
+        "scans",
+        "bytes"
+      ]
+    },
+    "Indexes": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "total": {
+          "type": "integer"
+        },
+        "scanned": {
+          "type": "integer"
+        },
+        "unused": {
+          "items": {
+            "$ref": "#/$defs/IndexStat"
+          },
+          "type": "array"
+        },
+        "largest": {
+          "items": {
+            "$ref": "#/$defs/IndexStat"
+          },
+          "type": "array"
+        },
+        "redundant": {
+          "items": {
+            "$ref": "#/$defs/RedundantIndex"
+          },
+          "type": "array"
+        },
+        "unindexed_fks": {
+          "items": {
+            "$ref": "#/$defs/UnindexedFK"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "total",
+        "scanned"
+      ]
+    },
+    "Limits": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "connections_used": {
+          "type": "integer"
+        },
+        "connections_max": {
+          "type": "integer"
+        },
+        "max_xid_age": {
+          "type": "integer"
+        },
+        "max_mxid_age": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "connections_used",
+        "connections_max",
+        "max_xid_age"
+      ]
+    },
+    "Locks": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "blocked_count": {
+          "type": "integer"
+        },
+        "chains": {
+          "items": {
+            "$ref": "#/$defs/BlockingRow"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "blocked_count"
+      ]
+    },
+    "NarrowIdentityColumn": {
+      "properties": {
+        "schema": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "column": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema",
+        "table",
+        "column",
+        "type"
+      ]
+    },
+    "PartitionRollup": {
+      "properties": {
+        "schema": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "partitions": {
+          "type": "integer"
+        },
+        "total_bytes": {
+          "type": "integer"
+        },
+        "live_tuples": {
+          "type": "integer"
+        },
+        "seq_scans": {
+          "type": "integer"
+        },
+        "index_scans": {
+          "type": "integer"
+        },
+        "hot_partition": {
+          "type": "string"
+        },
+        "hot_scans": {
+          "type": "integer"
+        },
+        "big_partition": {
+          "type": "string"
+        },
+        "big_rows": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema",
+        "table",
+        "partitions",
+        "total_bytes",
+        "live_tuples",
+        "seq_scans",
+        "index_scans"
+      ]
+    },
+    "Progress": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "operations": {
+          "items": {
+            "$ref": "#/$defs/ProgressOp"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness"
+      ]
+    },
+    "ProgressOp": {
+      "properties": {
+        "pid": {
+          "type": "integer"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "relation": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "pct": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "pid",
+        "operation"
+      ]
+    },
+    "Queries": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "total_exec_ms": {
+          "type": "number"
+        },
+        "pgss_dealloc": {
+          "type": "integer"
+        },
+        "pgss_count": {
+          "type": "integer"
+        },
+        "pgss_max": {
+          "type": "integer"
+        },
+        "top": {
+          "items": {
+            "$ref": "#/$defs/QueryStat"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "enabled"
+      ]
+    },
+    "QueryStat": {
+      "properties": {
+        "queryid": {
+          "type": "integer"
+        },
+        "query": {
+          "type": "string"
+        },
+        "calls": {
+          "type": "integer"
+        },
+        "total_ms": {
+          "type": "number"
+        },
+        "mean_ms": {
+          "type": "number"
+        },
+        "max_ms": {
+          "type": "number"
+        },
+        "rows": {
+          "type": "integer"
+        },
+        "cache_hit": {
+          "type": "number"
+        },
+        "wal_bytes": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "queryid",
+        "query",
+        "calls",
+        "total_ms",
+        "mean_ms",
+        "max_ms",
+        "rows",
+        "wal_bytes"
+      ]
+    },
+    "QueryWaits": {
+      "properties": {
+        "query_id": {
+          "type": "integer"
+        },
+        "sample_text": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer"
+        },
+        "share": {
+          "type": "number"
+        },
+        "lock_share": {
+          "type": "number"
+        },
+        "io_share": {
+          "type": "number"
+        },
+        "top_type": {
+          "type": "string"
+        },
+        "top_event": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "query_id",
+        "count",
+        "share",
+        "lock_share",
+        "io_share"
+      ]
+    },
+    "RedundantIndex": {
+      "properties": {
+        "schema": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "index": {
+          "type": "string"
+        },
+        "covered_by": {
+          "type": "string"
+        },
+        "bytes": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema",
+        "table",
+        "index",
+        "covered_by",
+        "bytes"
+      ]
+    },
+    "ReplicaRow": {
+      "properties": {
+        "client_addr": {
+          "type": "string"
+        },
+        "application_name": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "sync_state": {
+          "type": "string"
+        },
+        "sync_priority": {
+          "type": "integer"
+        },
+        "replay_lag_sec": {
+          "type": "number"
+        },
+        "write_lag_bytes": {
+          "type": "integer"
+        },
+        "flush_lag_bytes": {
+          "type": "integer"
+        },
+        "replay_lag_bytes": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "client_addr",
+        "state",
+        "sync_state",
+        "write_lag_bytes",
+        "flush_lag_bytes",
+        "replay_lag_bytes"
+      ]
+    },
+    "Replication": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "is_replica": {
+          "type": "boolean"
+        },
+        "replicas": {
+          "items": {
+            "$ref": "#/$defs/ReplicaRow"
+          },
+          "type": "array"
+        },
+        "receiver_lag_sec": {
+          "type": "number"
+        },
+        "slots": {
+          "items": {
+            "$ref": "#/$defs/ReplicationSlot"
+          },
+          "type": "array"
+        },
+        "subscriptions": {
+          "items": {
+            "$ref": "#/$defs/Subscription"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "is_replica"
+      ]
+    },
+    "ReplicationSlot": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "database": {
+          "type": "string"
+        },
+        "retained_bytes": {
+          "type": "integer"
+        },
+        "wal_status": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "type",
+        "active",
+        "retained_bytes"
+      ]
+    },
+    "Safety": {
+      "properties": {
+        "blocking_caveats": {
+          "items": {
+            "$ref": "#/$defs/SafetyGuard"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "blocking_caveats"
+      ]
+    },
+    "SafetyGuard": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "verify": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "action",
+        "text",
+        "verify"
+      ]
+    },
+    "SequenceUsage": {
+      "properties": {
+        "schema": {
+          "type": "string"
+        },
+        "sequence": {
+          "type": "string"
+        },
+        "last_value": {
+          "type": "integer"
+        },
+        "ceiling": {
+          "type": "integer"
+        },
+        "pct_used": {
+          "type": "number"
+        },
+        "owned_by": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema",
+        "sequence",
+        "last_value",
+        "ceiling",
+        "pct_used"
+      ]
+    },
+    "Sequences": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/SequenceUsage"
+          },
+          "type": "array"
+        },
+        "narrow_identity": {
+          "items": {
+            "$ref": "#/$defs/NarrowIdentityColumn"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness"
+      ]
+    },
+    "ServerInfo": {
+      "properties": {
+        "version_num": {
+          "type": "integer"
+        },
+        "version_text": {
+          "type": "string"
+        },
+        "database": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "in_recovery": {
+          "type": "boolean"
+        },
+        "via_pooler": {
+          "type": "boolean"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "uptime_seconds": {
+          "type": "integer"
+        },
+        "extensions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "has_pg_monitor": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "version_num",
+        "version_text",
+        "database",
+        "uptime_seconds",
+        "extensions",
+        "capabilities",
+        "has_pg_monitor"
+      ]
+    },
+    "Settings": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "overrides": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "params": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "overrides"
+      ]
+    },
+    "StandbyStatus": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "confl_tablespace": {
+          "type": "integer"
+        },
+        "confl_lock": {
+          "type": "integer"
+        },
+        "confl_snapshot": {
+          "type": "integer"
+        },
+        "confl_bufferpin": {
+          "type": "integer"
+        },
+        "confl_deadlock": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "confl_tablespace",
+        "confl_lock",
+        "confl_snapshot",
+        "confl_bufferpin",
+        "confl_deadlock"
+      ]
+    },
+    "Subscription": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "worker_running": {
+          "type": "boolean"
+        },
+        "last_msg_age_sec": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "worker_running"
+      ]
+    },
+    "TableStat": {
+      "properties": {
+        "schema": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "total_bytes": {
+          "type": "integer"
+        },
+        "live_tuples": {
+          "type": "integer"
+        },
+        "dead_tuples": {
+          "type": "integer"
+        },
+        "dead_ratio": {
+          "type": "number"
+        },
+        "seq_scans": {
+          "type": "integer"
+        },
+        "index_scans": {
+          "type": "integer"
+        },
+        "mods_since_analyze": {
+          "type": "integer"
+        },
+        "updates": {
+          "type": "integer"
+        },
+        "hot_updates": {
+          "type": "integer"
+        },
+        "last_analyze": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "last_autoanalyze": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "analyze_scale_override": {
+          "type": "number"
+        },
+        "analyze_threshold_override": {
+          "type": "number"
+        },
+        "autovacuum_count": {
+          "type": "integer"
+        },
+        "autovacuum_disabled": {
+          "type": "boolean"
+        },
+        "vacuum_scale_override": {
+          "type": "number"
+        },
+        "vacuum_threshold_override": {
+          "type": "number"
+        },
+        "last_vacuum": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "last_autovacuum": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema",
+        "table",
+        "total_bytes",
+        "live_tuples",
+        "dead_tuples",
+        "dead_ratio",
+        "seq_scans",
+        "index_scans",
+        "mods_since_analyze"
+      ]
+    },
+    "Tables": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "db_size_bytes": {
+          "type": "integer"
+        },
+        "top": {
+          "items": {
+            "$ref": "#/$defs/TableStat"
+          },
+          "type": "array"
+        },
+        "partitioned": {
+          "items": {
+            "$ref": "#/$defs/PartitionRollup"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "db_size_bytes"
+      ]
+    },
+    "UnindexedFK": {
+      "properties": {
+        "schema": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "constraint": {
+          "type": "string"
+        },
+        "columns": {
+          "type": "string"
+        },
+        "child_bytes": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema",
+        "table",
+        "constraint",
+        "columns",
+        "child_bytes"
+      ]
+    },
+    "VacuumHorizon": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "holders": {
+          "items": {
+            "$ref": "#/$defs/HorizonHolder"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness"
+      ]
+    },
+    "WAL": {
+      "properties": {
+        "exactness": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "bytes_per_sec": {
+          "type": "number"
+        },
+        "records_per_sec": {
+          "type": "number"
+        },
+        "buffers_full": {
+          "type": "integer"
+        },
+        "dir_bytes": {
+          "type": "integer"
+        },
+        "dir_files": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exactness",
+        "buffers_full"
+      ]
+    },
+    "WaitBucket": {
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer"
+        },
+        "share": {
+          "type": "number"
+        },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/WaitEvent"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "count",
+        "share"
+      ]
+    },
+    "WaitEvent": {
+      "properties": {
+        "event": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer"
+        },
+        "share": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event",
+        "count",
+        "share"
+      ]
+    },
+    "WaitProfile": {
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "samples": {
+          "type": "integer"
+        },
+        "window_seconds": {
+          "type": "number"
+        },
+        "buckets": {
+          "items": {
+            "$ref": "#/$defs/WaitBucket"
+          },
+          "type": "array"
+        },
+        "by_query": {
+          "items": {
+            "$ref": "#/$defs/QueryWaits"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "available",
+        "samples",
+        "window_seconds"
+      ]
+    },
+    "Window": {
+      "properties": {
+        "sample_seconds": {
+          "type": "number"
+        },
+        "stats_reset_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "postmaster_start_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "window_age_seconds": {
+          "type": "integer"
+        },
+        "stats_window_days": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "sample_seconds"
+      ]
+    }
+  },
+  "description": "pgbot inspect --json — the versioned Context contract for agents and scripts."
+}

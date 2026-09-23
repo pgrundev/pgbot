@@ -61,6 +61,10 @@ func runTune(cmd *cobra.Command, args []string, f inspectFlags) error {
 	}
 
 	fmt.Printf("%s · %s · %d tuning recommendation(s)\n\n", st.Head(host), pgVersionShort(c.Server.VersionNum), len(tuning))
+	if busy, pool, ok := findings.PoolSizing(c); ok {
+		fmt.Printf("%s workload keeps ~%.1f backends busy on average → a server pool of ~%d connections (3× headroom) is the sizing starting point; max_connections is %d\n\n",
+			st.Dim("pool"), busy, pool, limitsMax(c))
+	}
 	if len(tuning) == 0 {
 		fmt.Println(st.Good("✓ no configuration changes recommended for the observed workload"))
 		return nil
@@ -72,6 +76,13 @@ func runTune(cmd *cobra.Command, args []string, f inspectFlags) error {
 	}
 	fmt.Println(st.Dim("pgbot recommends; it never changes settings. Apply what fits your workload."))
 	return nil
+}
+
+func limitsMax(c *model.Context) int {
+	if c.Limits == nil {
+		return 0
+	}
+	return c.Limits.ConnectionsMax
 }
 
 func pgVersionShort(num int) string {
