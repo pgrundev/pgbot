@@ -26,7 +26,7 @@ type DiffInput struct {
 // DiffReport renders a comparison of two baseline snapshots. It never claims the
 // requested interval when it got a different one, and it says up front when a
 // reset or eviction between the snapshots makes specific deltas untrustworthy.
-func DiffReport(w io.Writer, in DiffInput) {
+func DiffReport(w io.Writer, in DiffInput) error {
 	st := styler{on: in.Color}
 	var b strings.Builder
 
@@ -63,8 +63,7 @@ func DiffReport(w io.Writer, in DiffInput) {
 
 	if in.Deltas == nil || len(in.Deltas.Changes) == 0 {
 		fmt.Fprintln(&b, st.good("✓ nothing material changed between these snapshots"))
-		_, _ = io.WriteString(w, b.String())
-		return
+		return writeTextReport(w, b.String())
 	}
 
 	fmt.Fprintln(&b, st.head(fmt.Sprintf("%d change(s):", len(in.Deltas.Changes))))
@@ -79,7 +78,18 @@ func DiffReport(w io.Writer, in DiffInput) {
 		}
 		fmt.Fprintf(&b, "  %s %s  %s  %s\n", color("·"), d.Subject, change, st.dim(d.Note))
 	}
-	_, _ = io.WriteString(w, b.String())
+	return writeTextReport(w, b.String())
+}
+
+func writeTextReport(w io.Writer, text string) error {
+	n, err := io.WriteString(w, text)
+	if err != nil {
+		return err
+	}
+	if n != len(text) {
+		return io.ErrShortWrite
+	}
+	return nil
 }
 
 // shortFP abbreviates a fingerprint for display.

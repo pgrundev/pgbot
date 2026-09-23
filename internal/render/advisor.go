@@ -23,7 +23,7 @@ type AdvisorInput struct {
 // AdvisorReport renders validated index recommendations. Every line makes the
 // "hypothetical, planner-confirmed, nothing built" guarantee explicit — a user
 // must never think pgbot changed their database.
-func AdvisorReport(w io.Writer, in AdvisorInput) {
+func AdvisorReport(w io.Writer, in AdvisorInput) error {
 	st := styler{on: in.Color}
 	var b strings.Builder
 
@@ -37,8 +37,7 @@ func AdvisorReport(w io.Writer, in AdvisorInput) {
 			"considered %d slow quer(y/ies), planned %d, tested %d candidate(s) — the planner didn't confirm a cost win for any.",
 			in.Considered, in.Planned, in.Candidates)))
 		fmt.Fprintln(&b, st.dim("That's a good sign: the queries pgbot could plan are already served by existing indexes."))
-		_, _ = io.WriteString(w, b.String())
-		return
+		return writeTextReport(w, b.String())
 	}
 
 	fmt.Fprintln(&b, st.head(fmt.Sprintf("%d validated recommendation(s):", len(in.Recommendations))))
@@ -75,7 +74,7 @@ func AdvisorReport(w io.Writer, in AdvisorInput) {
 		tail += fmt.Sprintf(" %d candidate(s) skipped: table statistics too stale to trust the estimate (ANALYZE first).", in.SkippedStale)
 	}
 	fmt.Fprintln(&b, st.dim(tail))
-	_, _ = io.WriteString(w, b.String())
+	return writeTextReport(w, b.String())
 }
 
 // humanCount abbreviates large call counts (1200000 → 1.2M).

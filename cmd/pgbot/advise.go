@@ -22,7 +22,13 @@ type adviseFlags struct {
 	timeout        time.Duration
 }
 
+type adviseRunner func(context.Context, string, int, float64) (adviseResult, error)
+
 func newAdviseCmd() *cobra.Command {
+	return newAdviseCmdWithRunner(nil)
+}
+
+func newAdviseCmdWithRunner(run adviseRunner) *cobra.Command {
 	var f adviseFlags
 	cmd := &cobra.Command{
 		Use:   "advise <connection-string>",
@@ -36,7 +42,10 @@ func newAdviseCmd() *cobra.Command {
 			"plans your query — it never executes it.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAdvise(cmd, args, f)
+			if run == nil {
+				return runAdvise(cmd, args, f)
+			}
+			return runAdviseWithRunner(cmd, args, f, run)
 		},
 	}
 	fl := cmd.Flags()
@@ -98,6 +107,10 @@ func adviseRun(ctx context.Context, connString string, top int, minImpr float64)
 }
 
 func runAdvise(cmd *cobra.Command, args []string, f adviseFlags) error {
+	return runAdviseWithRunner(cmd, args, f, adviseRun)
+}
+
+func runAdviseWithRunner(cmd *cobra.Command, args []string, f adviseFlags, run adviseRunner) error {
 	connString := firstNonEmpty(argAt(args, 0), os.Getenv("DATABASE_URL"), os.Getenv("PGBOT_DATABASE_URL"), pgServiceFallback())
 	if connString == "" {
 		return fmt.Errorf("no connection string (pass one or set $DATABASE_URL)")
@@ -105,7 +118,7 @@ func runAdvise(cmd *cobra.Command, args []string, f adviseFlags) error {
 	ctx, cancel := context.WithTimeout(cmd.Context(), f.timeout)
 	defer cancel()
 
-	res, err := adviseRun(ctx, connString, f.top, f.minImprovement)
+	res, err := run(ctx, connString, f.top, f.minImprovement)
 	if err != nil {
 		return err
 	}
@@ -124,12 +137,11 @@ func runAdvise(cmd *cobra.Command, args []string, f adviseFlags) error {
 			"skipped_stale":   stats.SkippedStaleStats,
 		})
 	}
-	render.AdvisorReport(os.Stdout, render.AdvisorInput{
+	return render.AdvisorReport(cmd.OutOrStdout(), render.AdvisorInput{
 		Color: useColor(f.noColor), Database: res.Database, VersionNum: res.VersionNum,
 		Recommendations: recs, Considered: stats.QueriesConsidered, Planned: stats.QueriesPlanned,
 		Candidates: stats.CandidatesTested, SkippedStale: stats.SkippedStaleStats,
 	})
-	return nil
 }
 
 // suggestIndexesTool is the MCP counterpart to `pgbot advise`: validated index
