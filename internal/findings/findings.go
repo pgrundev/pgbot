@@ -1652,25 +1652,29 @@ func walArchiving(c *model.Context, add func(model.Finding)) {
 		add(f)
 	}
 
-	// archiving_stalled: mode on, WAL flowing, nothing archived recently.
+	// archiving_stalled: mode on, current WAL sample nonzero, last successful
+	// archive older than the threshold at collection time.
 	if (archiveMode == "on" || archiveMode == "always") && !failing {
 		walFlowing := c.WAL != nil && c.WAL.BytesPerSec != nil && *c.WAL.BytesPerSec > 0
-		if walFlowing && a.LastArchivedTime != nil && time.Since(*a.LastArchivedTime) > archiveStallThreshold(c) {
-			age := int64(time.Since(*a.LastArchivedTime).Seconds())
-			f := model.Finding{
-				ID: "archiving_stalled", Severity: sev(model.SeverityCritical),
-				Title:       fmt.Sprintf("WAL archiving stalled — nothing archived in %s while WAL is being written", shortDur(age)),
-				Detail:      "archive_mode is on and WAL is being generated, but no segment has been archived recently. WAL can't be recycled until it's archived, so this both breaks PITR and fills the disk.",
-				Evidence:    []string{fmt.Sprintf("last archived %s ago; archive_timeout=%s", shortDur(age), orUnknownSetting(settingParam(c, "archive_timeout")))},
-				Remediation: "Check that the archiver process is running and the archive_command target is reachable.",
-				Impact:      impact(model.DimRisk, 90, "archiving stalled", "last_archived_time age vs max(archive_timeout×3, 1h)"),
-				Confidence:  0.85,
+		if walFlowing && a.LastArchivedTime != nil && !c.CollectedAt.IsZero() {
+			archiveAge := c.CollectedAt.Sub(*a.LastArchivedTime)
+			if archiveAge > archiveStallThreshold(c) {
+				age := int64(archiveAge.Seconds())
+				f := model.Finding{
+					ID: "archiving_stalled", Severity: sev(model.SeverityCritical),
+					Title:       fmt.Sprintf("WAL archiving stalled — nothing archived in %s while WAL is being written", shortDur(age)),
+					Detail:      "archive_mode is on, the current sample shows WAL generation, and the last successful archive is older than the threshold. Verify that eligible completed segments are not progressing: a stuck archiver can retain WAL, widen the archive-coverage gap and fill the disk.",
+					Evidence:    []string{fmt.Sprintf("last archived %s ago; archive_timeout=%s", shortDur(age), orUnknownSetting(settingParam(c, "archive_timeout")))},
+					Remediation: "Check that the archiver process is running and the archive_command target is reachable.",
+					Impact:      impact(model.DimRisk, 90, "archiving stalled", "last_archived_time age vs max(archive_timeout×3, 1h)"),
+					Confidence:  0.85,
+				}
+				if managed {
+					f.Caveats = append(f.Caveats, managedNote)
+				}
+				crossLinkWAL(c, &f)
+				add(f)
 			}
-			if managed {
-				f.Caveats = append(f.Caveats, managedNote)
-			}
-			crossLinkWAL(c, &f)
-			add(f)
 		}
 	}
 

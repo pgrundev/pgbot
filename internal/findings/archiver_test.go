@@ -140,12 +140,14 @@ func TestArchiveStallThreshold(t *testing.T) {
 // dead parse used the 1h floor and fired a false critical here.
 func TestWalArchiving_stalledRespectsArchiveTimeout(t *testing.T) {
 	flow := 1024.0
-	twoHoursAgo := time.Now().Add(-2 * time.Hour)
+	collectedAt := time.Date(2024, 2, 3, 12, 0, 0, 0, time.UTC)
+	twoHoursAgo := collectedAt.Add(-2 * time.Hour)
 	base := func(timeout string) *model.Context {
 		return &model.Context{
-			Archiver: &model.Archiver{LastArchivedTime: &twoHoursAgo},
-			WAL:      &model.WAL{BytesPerSec: &flow},
-			Settings: &model.Settings{Params: map[string]string{"archive_mode": "on", "archive_timeout": timeout}},
+			CollectedAt: collectedAt,
+			Archiver:    &model.Archiver{LastArchivedTime: &twoHoursAgo},
+			WAL:         &model.WAL{BytesPerSec: &flow},
+			Settings:    &model.Settings{Params: map[string]string{"archive_mode": "on", "archive_timeout": timeout}},
 		}
 	}
 	if f := has(Compute(base("8h")), "archiving_stalled"); f != nil {
