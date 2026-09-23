@@ -3,7 +3,7 @@
 All notable changes to pgbot are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims for
 [Semantic Versioning](https://semver.org/). The `--json` contract is versioned
-separately by `model.SchemaVersion` (currently 1.2.0).
+separately by `model.SchemaVersion` (currently 1.3.0).
 
 ## [Unreleased]
 
@@ -21,6 +21,16 @@ separately by `model.SchemaVersion` (currently 1.2.0).
   `pgbot ask "why is it slow?"`.
 
 ### Added
+- **`collation_version_mismatch` finding** (PG15+). The collation library
+  (libc or ICU) that defines text sort order changed version under the data —
+  an OS upgrade, a new base image, a restore onto a different host — so every
+  btree over text sorted by it may be silently out of order: lookups miss rows
+  and `UNIQUE` stops catching duplicates. Read from `pg_database.datcollversion`
+  and `pg_collation.collversion` against the library's actual version; critical
+  when it is the database default, warn for a named collation. The remediation
+  is REINDEX **then** `REFRESH COLLATION VERSION`, in that order — the caveat
+  says why. New `collation` section in `--json`; `SchemaVersion` → **1.3.0**
+  (additive; a 1.2.0 consumer parses it unchanged).
 - **`$PGSERVICE` as a connection fallback** (#25). When no connection string
   is passed and neither `$DATABASE_URL` nor `$PGBOT_DATABASE_URL` is set,
   pgbot now checks `$PGSERVICE` too, so a

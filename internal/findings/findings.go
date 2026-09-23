@@ -126,7 +126,8 @@ var knownIDs = map[string]bool{
 	"sync_rep_degraded": true, "replica_lag_time": true, "recovery_conflicts": true,
 	"replica_disconnected": true, "checksum_failures": true,
 	"ignore_checksum_failure_on": true, "checksums_disabled": true,
-	"archiving_failing": true, "archiving_stalled": true, "archiving_disabled": true,
+	"collation_version_mismatch": true,
+	"archiving_failing":          true, "archiving_stalled": true, "archiving_disabled": true,
 	"replication_slot_inactive": true, "subscription_worker_down": true,
 	"query_slowdown": true, "pgss_entries_evicted": true, "work_mem_low": true,
 	"checkpoints_forced": true, "connections_overprovisioned": true, "fsync_off": true,
@@ -194,6 +195,7 @@ func ComputeWithTunables(c *model.Context, tun Tunables) []model.Finding {
 	int4IdentityColumn(c, add)
 	walArchiving(c, add)
 	checksumFindings(c, add)
+	collationVersionMismatch(c, add)
 	failoverReadiness(c, add, tun)
 	replicationSlotRisk(c, add)
 	subscriptionDown(c, add)
@@ -1590,6 +1592,52 @@ func checksumFindings(c *model.Context, add func(model.Finding)) {
 			Confidence:  1.0,
 		})
 	}
+}
+
+// collationVersionMismatch flags catalog objects whose recorded collation version
+// no longer matches the running library: libc or ICU changed under the data (an
+// OS upgrade, a new base image, a restore onto a different host), so any btree
+// over text sorted by that collation may be silently out of order — lookups miss
+// rows and UNIQUE constraints stop catching duplicates. Critical when it is the
+// database default (every unqualified text index); warn for a named collation.
+func collationVersionMismatch(c *model.Context, add func(model.Finding)) {
+	if c.Collation == nil || len(c.Collation.Mismatches) == 0 {
+		return
+	}
+	var ev []string
+	dbDefault := false
+	for _, m := range c.Collation.Mismatches {
+		actual := m.Actual
+		if actual == "" {
+			actual = "unknown"
+		}
+		if m.Kind == "database" {
+			dbDefault = true
+			ev = append(ev, fmt.Sprintf("database default (%s): recorded %s, library now %s", m.Provider, m.Recorded, actual))
+			continue
+		}
+		ev = append(ev, fmt.Sprintf("collation %s (%s): recorded %s, library now %s", m.Name, m.Provider, m.Recorded, actual))
+	}
+	n := len(c.Collation.Mismatches)
+	sev, score := model.SeverityWarn, 60.0
+	title := fmt.Sprintf("%d collation(s) changed version under this database", n)
+	if dbDefault {
+		sev, score = model.SeverityCritical, 88
+		title = "the database's default collation changed version — text indexes may be corrupt"
+	}
+	add(model.Finding{
+		ID: "collation_version_mismatch", Object: "db:" + c.Server.Database, Severity: sev,
+		Title:       title,
+		Detail:      "The library that defines this collation's sort order (libc or ICU) is a different version from the one the catalog recorded when the collation was created. If the order changed — glibc 2.28 did for most locales — every btree index over text using it is silently out of order: equality lookups miss rows, range scans skip them, and UNIQUE constraints stop catching duplicates. Postgres warns at connect time but repairs nothing.",
+		Evidence:    ev,
+		Remediation: "REINDEX every index over text columns using the affected collation (REINDEX DATABASE CONCURRENTLY for the default), then record the new version with ALTER DATABASE … REFRESH COLLATION VERSION or ALTER COLLATION … REFRESH VERSION so the warning stops.",
+		Caveats: []string{
+			"Refresh the version only AFTER reindexing — REFRESH COLLATION VERSION updates the catalog and silences the warning; it repairs nothing.",
+			"A version change does not prove the sort order changed for your locale, but the only way to know is to reindex; treat the indexes as suspect until then.",
+		},
+		Impact:     impact(model.DimRisk, score, fmt.Sprintf("%d collation version mismatch(es)", n), "datcollversion/collversion ≠ the library's actual version"),
+		Confidence: 1.0,
+	})
 }
 
 // walArchiving flags the WAL-archiving / PITR failure modes. On a detected
