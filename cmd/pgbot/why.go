@@ -117,7 +117,7 @@ func computeWhy(storePath, fpSpec string, window time.Duration, maxChains int) (
 	report := why.Analyze(samples, events, why.Options{MaxChains: maxChains})
 	// "Only 2 snapshots" while the listing said 26 reads as a bug: when the
 	// store holds history the window cut off, say so and name the fix.
-	if older := item.Count - len(samples); older > 0 && len(samples) < 3 {
+	if older := item.Count - len(samples); older > 0 && len(samples) < why.MinSnapshots {
 		report.Notes = append(report.Notes, fmt.Sprintf(
 			"the store holds %d more snapshot(s) for this database older than the %s window — widen it to reach them, e.g. --window %dh",
 			older, window, int(window.Hours())*4))
@@ -149,7 +149,7 @@ func printWhy(w io.Writer, r why.Report) {
 	for _, note := range r.Notes {
 		fmt.Fprintf(w, "%s\n", note)
 	}
-	if r.Snapshots < 3 {
+	if r.Snapshots < why.MinSnapshots {
 		return // the note above already says what to do
 	}
 	fmt.Fprintf(w, "analyzed %d quer%s and %d table%s from your stored history — found %d sustained regression%s",
@@ -291,7 +291,7 @@ func printWhyLive(w io.Writer, r why.Report, f whyFlags) {
 		fmt.Fprintf(w, "%s %s\n\n", st.Head("Next check:"), l.NextCheck)
 	}
 
-	if len(r.Chains) > 0 || r.Snapshots >= 3 {
+	if len(r.Chains) > 0 || r.Snapshots >= why.MinSnapshots {
 		fmt.Fprintln(w, st.Head("From stored history"))
 		printWhy(w, r)
 	} else {

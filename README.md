@@ -617,7 +617,8 @@ on stdio, so an AI agent can call pgbot as a read-only tool. It exposes
 - `schema_of` — a table's columns/indexes/constraints + row estimate, **no data**
 - `compare_to_baseline` — the `diff`, with its interval-honesty and reset caveats
 - `why` — the causal chains from stored history (symptom ← mechanism ←
-  antecedent), computed offline from the local store
+  antecedent), computed offline from the local store; at least four stored snapshots
+  are needed to produce the three interval observations required for a sustained change
 - `explain_finding` — pgbot's catalogue page for a finding, so the agent explains
   a recommendation in pgbot's words instead of inventing them
 
