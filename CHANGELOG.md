@@ -41,6 +41,11 @@ separately by `model.SchemaVersion` (currently 1.2.0).
   `eval "$(aws configure export-credentials --format env)"`. Access keys only
   ever go to the Mantle host for the configured region, and Bedrock requests
   never follow redirects.
+- **Requesty as an `explain` / `ask` provider.** `PGBOT_AI_PROVIDER=requesty`
+  sends `/chat/completions` to `https://router.requesty.ai/v1` with
+  `REQUESTY_API_KEY` (or `PGBOT_AI_API_KEY`), the same way the `openrouter`
+  alias works. It is never auto-detected, and it never picks up an OpenAI or
+  OpenRouter key.
 
 ### Fixed
 - **Connection-string redaction now covers `?password=` in URL form.** libpq

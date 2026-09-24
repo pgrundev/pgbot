@@ -457,6 +457,7 @@ one SSH connection serves the whole run. Raise `--timeout` if the link is slow.
 | `PGBOT_SSH_TUNNEL` | SSH jump host used when `--ssh-tunnel` isn't passed (`[user@]host[:port]`, or a `~/.ssh/config` alias). |
 | `PGBOT_CONFIG` | Path to `.pgbot.toml` (otherwise discovered from cwd upward, then `$XDG_CONFIG_HOME`). |
 | `OPENAI_API_KEY` / `OPENROUTER_API_KEY` | Enables `ask` / `explain` via OpenAI or OpenRouter. Keys are never accepted as flags. |
+| `REQUESTY_API_KEY` | Enables `ask` / `explain` via [Requesty](https://docs.requesty.ai) with `PGBOT_AI_PROVIDER=requesty` (never auto-detected). |
 | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | Enables `ask` / `explain` via Google Gemini. |
 | `ANTHROPIC_API_KEY` | Enables `ask` / `explain` via Anthropic. |
 | `XAI_API_KEY` / `GROK_API_KEY` | Enables `ask` / `explain` via xAI. |
@@ -709,7 +710,11 @@ not require confirmation.
 | Bedrock Mantle | `AWS_BEARER_TOKEN_BEDROCK`, or `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | `openai.gpt-5.6-terra` | Responses (GPT) / Messages (Claude) |
 
 The OpenAI provider also supports compatible services such as OpenRouter,
-Groq, Together, DeepSeek, Mistral, Ollama, vLLM, and LM Studio.
+Requesty, Groq, Together, DeepSeek, Mistral, Ollama, vLLM, and LM Studio.
+`PGBOT_AI_PROVIDER=requesty` with `REQUESTY_API_KEY` points it at
+`https://router.requesty.ai/v1`; set `PGBOT_AI_MODEL` to any Requesty model id
+(for example `openai/gpt-4o-mini`), and `PGBOT_AI_BASE_URL` to
+`https://router.eu.requesty.ai/v1` to keep requests in the EU.
 
 ```
 export OPENAI_API_KEY=…
