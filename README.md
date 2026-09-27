@@ -1,4 +1,8 @@
 
+<p align="center">
+  <img src="docs/img/pgbot-mark.png" alt="" width="82" height="82">
+</p>
+
 <h1 align="center">pgbot</h1>
 
 <p align="center">
