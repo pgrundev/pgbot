@@ -198,7 +198,23 @@ func dialSSH(ctx context.Context, spec string) (*ssh.Client, error) {
 	if dl, ok := ctx.Deadline(); ok {
 		_ = rawConn.SetDeadline(dl)
 	}
+	// NewClientConn has no context parameter. Close the TCP connection when the
+	// caller cancels, including cancellation before (or without) a deadline.
+	// Stop and join the callback before publishing a successful shared client:
+	// cancelling this request later must not close other requests' channels.
+	cancelDone := make(chan struct{})
+	stopCancel := context.AfterFunc(ctx, func() {
+		_ = rawConn.Close()
+		close(cancelDone)
+	})
 	sc, chans, reqs, err := ssh.NewClientConn(rawConn, h.addr, cfg)
+	if !stopCancel() {
+		<-cancelDone
+		if sc != nil {
+			_ = sc.Close()
+		}
+		return nil, fmt.Errorf("handshake with %s: %w", h.addr, ctx.Err())
+	}
 	if err != nil {
 		_ = rawConn.Close()
 		return nil, fmt.Errorf("handshake with %s: %w", h.addr, err)

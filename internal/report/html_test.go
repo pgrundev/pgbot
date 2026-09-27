@@ -86,3 +86,34 @@ func TestRenderReportSparse(t *testing.T) {
 		t.Error("header must still carry the database")
 	}
 }
+
+func TestRenderReportCarriesDestructiveSafetyGuards(t *testing.T) {
+	verify := "confirm the index is unused on every replica"
+	c := &model.Context{
+		Server: model.ServerInfo{Database: "shop"},
+		Findings: []model.Finding{{
+			ID:          "unused_indexes",
+			Severity:    model.SeverityWarn,
+			Title:       "an index appears unused",
+			Remediation: "DROP INDEX CONCURRENTLY after verification",
+			Safety: &model.Safety{BlockingCaveats: []model.SafetyGuard{{
+				ID:     "unused_index.per_node",
+				Kind:   model.GuardPrecondition,
+				Action: model.ActionDropIndex,
+				Text:   "zero scans on this node do not prove cluster-wide disuse",
+				Verify: &verify,
+			}}},
+		}},
+	}
+
+	out := Render(c, 80, "test")
+	for _, want := range []string{
+		model.ActionDropIndex,
+		"zero scans on this node do not prove cluster-wide disuse",
+		verify,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("HTML report dropped destructive-action guard %q", want)
+		}
+	}
+}

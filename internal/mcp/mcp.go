@@ -86,9 +86,22 @@ type rpcError struct {
 // defaultProtocol is the MCP revision we advertise when a client doesn't pin one.
 const defaultProtocol = "2024-11-05"
 
+// negotiateProtocol returns a requested handshake revision only when the
+// server implements it. Unknown revisions fall back to the existing default so
+// the client can accept that counter-offer or disconnect.
+func negotiateProtocol(requested string) string {
+	switch requested {
+	case "2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25":
+		return requested
+	default:
+		return defaultProtocol
+	}
+}
+
 // Serve runs the read-dispatch-write loop until stdin closes. Messages are one
 // JSON object per line; responses go to out. Nothing but protocol goes to out —
-// callers must log to stderr.
+// callers must log to stderr. A failed response write ends the session so no
+// further tools are dispatched after the output transport is lost.
 func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	r := bufio.NewReader(in)
 	w := bufio.NewWriter(out)
@@ -97,7 +110,9 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 		line, err := r.ReadBytes('\n')
 		if len(bytes.TrimSpace(line)) > 0 {
 			s.dispatch(ctx, line, w, &proto)
-			_ = w.Flush()
+			if err := w.Flush(); err != nil {
+				return err
+			}
 		}
 		if err != nil {
 			if err == io.EOF {
@@ -121,9 +136,8 @@ func (s *Server) dispatch(ctx context.Context, raw []byte, w io.Writer, proto *s
 		var p struct {
 			ProtocolVersion string `json:"protocolVersion"`
 		}
-		_ = json.Unmarshal(req.Params, &p)
-		if p.ProtocolVersion != "" {
-			*proto = p.ProtocolVersion // echo the client's revision for compatibility
+		if err := json.Unmarshal(req.Params, &p); err == nil && p.ProtocolVersion != "" {
+			*proto = negotiateProtocol(p.ProtocolVersion)
 		}
 		caps := map[string]any{"tools": map[string]any{}}
 		if len(s.Prompts) > 0 {

@@ -10,4 +10,11 @@ package model
 //
 // 1.2.0: additive only — IndexStat gains columns/method/unique/primary (feeding
 // index/code correlation). A 1.1.0 consumer still parses 1.2.0 output.
-const SchemaVersion = "1.3.0"
+//
+// 1.3.0: additive only — Context gains the `collation` section (collation version
+// drift, PG15+). A 1.2.0 consumer still parses 1.3.0 output.
+//
+// 1.4.0: additive only — ServerInfo gains instance/instance_role, naming the
+// cluster member a report came from under --all-instances. Both are omitted on a
+// single-instance run, so a 1.3.0 consumer still parses 1.4.0 output.
+const SchemaVersion = "1.4.0"

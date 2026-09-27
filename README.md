@@ -817,7 +817,8 @@ All from SQL — connections, cache-hit ratio, TPS and rollback ratio, WAL and I
 rates, checkpoints, locks and blocking chains, replication lag, replication-slot
 WAL retention and logical-subscription health, top queries
 (`pg_stat_statements`), table/index sizes, dead tuples and vacuum activity,
-unused and missing indexes, and non-default settings. Counters
+unused and missing indexes, non-default settings, and collation version drift
+(PG15+). Counters
 (`pg_stat_database`, `pg_stat_wal`, IO) are **double-sampled** to produce live
 rates; the rest are point-in-time reads trended against the baseline.
 
@@ -830,7 +831,7 @@ JSON Schema is published in [`schema/`](schema/). Every section carries an
 consumer never mistakes a cumulative total for a live rate.
 
 Versioning policy: additive fields bump the minor version and are not breaking —
-a `1.1.0` consumer parses `1.2.0` output unchanged; breaking changes to the
+a `1.2.0` consumer parses `1.3.0` output unchanged; breaking changes to the
 contract are treated as breaking changes to the tool. `pgbot advise --json` has
 its own schema
 ([`schema/pgbot-advise-1.0.0.json`](schema/pgbot-advise-1.0.0.json)).

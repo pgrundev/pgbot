@@ -62,14 +62,17 @@ function main() {
 
   // Forward termination signals so the Go binary's graceful cancellation (P0-3)
   // still fires when npx is interrupted.
+  const signalHandlers = new Map();
   for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
-    process.on(sig, () => {
+    const forward = () => {
       try {
         child.kill(sig);
       } catch (_) {
         /* child already gone */
       }
-    });
+    };
+    signalHandlers.set(sig, forward);
+    process.on(sig, forward);
   }
 
   child.on('error', (err) => {
@@ -81,6 +84,9 @@ function main() {
     if (signal) {
       // Re-raise so our exit status reflects the signal (128+n by convention),
       // matching what the child experienced.
+      for (const [sig, handler] of signalHandlers) {
+        process.removeListener(sig, handler);
+      }
       process.kill(process.pid, signal);
       return;
     }

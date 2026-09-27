@@ -104,6 +104,7 @@ var registry = []Collector{
 	progressCollector{},
 	archiverCollector{},
 	checksumsCollector{},
+	collationCollector{},
 	standbyCollector{},
 }
 
