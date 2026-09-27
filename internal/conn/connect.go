@@ -250,11 +250,14 @@ func probe(ctx context.Context, cc *pgx.ConnConfig) (Capabilities, PoolerInfo, u
 		       (SELECT count(*) FROM pg_settings WHERE name LIKE 'cloudsql.%') > 0,
 		       (SELECT count(*) FROM pg_settings WHERE name LIKE 'azure.%') > 0,
 		       pg_is_in_recovery(),
-		       -- Aurora exposes aurora_version(). Look it up in the catalog rather
-		       -- than CALLING it: on every other server the call fails, which writes
-		       -- an ERROR to the server log and books a rollback in pg_stat_database
-		       -- on each pgbot run — the very counter pgbot reports.
-		       (SELECT count(*) FROM pg_proc WHERE proname = 'aurora_version') > 0`
+		       -- Aurora exposes aurora_version() and aurora_replica_status(), but does
+		       -- not catalogue them in pg_proc on every release (confirmed missing on
+		       -- 18.3). Resolve them by signature rather than CALLING them: a call
+		       -- fails on every other server, which writes an ERROR to the server log
+		       -- and books a rollback in pg_stat_database on each pgbot run — the very
+		       -- counter pgbot reports. to_regprocedure does neither.
+		       to_regprocedure('aurora_version()') IS NOT NULL
+		         OR to_regprocedure('aurora_replica_status()') IS NOT NULL`
 	err = c.QueryRow(ctx, q, mode...).Scan(&caps.VersionNum, &caps.VersionText, &caps.Database,
 		&caps.StartedAt, &caps.HasStatStatements, &caps.HasHypopg, &caps.HasPgMonitor,
 		&mk.HasRDS, &mk.HasCloudSQL, &mk.HasAzure, &caps.InRecovery, &mk.IsAurora)
