@@ -10,4 +10,8 @@ package model
 //
 // 1.2.0: additive only — IndexStat gains columns/method/unique/primary (feeding
 // index/code correlation). A 1.1.0 consumer still parses 1.2.0 output.
-const SchemaVersion = "1.2.0"
+//
+// 1.3.0: additive only — SequenceUsage gains optional effective floor,
+// increment, cycle, and owning-column-limit metadata. Legacy sequence items
+// retain their ceiling and pct_used fields and omit the new keys.
+const SchemaVersion = "1.3.0"

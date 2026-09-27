@@ -35,7 +35,7 @@ Lost durability, corruption, wraparound, replication — things that end in an o
 - **[replica_disconnected](replica_disconnected.md)** · Warn — a streaming standby that was present has dropped off
 - **[replica_lag_time](replica_lag_time.md)** · Warn — a replica's replay lag has grown past the threshold
 - **[replication_slot_inactive](replication_slot_inactive.md)** · Warn — an inactive replication slot is pinning WAL from removal
-- **[sequence_exhaustion](sequence_exhaustion.md)** · Warn — a sequence near its ceiling — the next insert will error
+- **[sequence_exhaustion](sequence_exhaustion.md)** · Warn — a sequence near its effective terminal bound in the increment direction
 - **[subscription_worker_down](subscription_worker_down.md)** · Warn — a logical subscription's apply worker isn't running
 - **[table_never_vacuumed](table_never_vacuumed.md)** · Warn — a sizable table with no vacuum on record
 - **[txid_wraparound](txid_wraparound.md)** · Warn — transaction-id age climbing toward the 2.1-billion read-only wall

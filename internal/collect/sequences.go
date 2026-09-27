@@ -15,18 +15,22 @@ var sqlSequences string
 //go:embed sql/narrow_identity.sql
 var sqlNarrowIdentity string
 
-// sequences = per-sequence exhaustion headroom, using the owning column's type
-// ceiling (an int4 column wraps at 2^31 regardless of the sequence's max_value).
-// PG10+ (pg_sequences). It also collects the structural half — narrow (int2/int4)
-// sequence-backed columns — which is schema-scoped and holds on an empty database.
+// sequences = per-sequence position in the increment direction, intersecting
+// configured bounds with the owning column's integer range. PG10+ (pg_sequences).
+// It also collects the structural half — narrow (int2/int4) sequence-backed
+// columns — which is schema-scoped and holds on an empty database.
 type sequencesCollector struct{}
 
 type sequenceRow struct {
-	Schema    string `db:"schema"`
-	Name      string `db:"sequence"`
-	LastValue int64  `db:"last_value"`
-	Ceiling   int64  `db:"ceiling"`
-	OwnedBy   string `db:"owned_by"`
+	Schema        string `db:"schema"`
+	Name          string `db:"sequence"`
+	LastValue     int64  `db:"last_value"`
+	Floor         int64  `db:"floor"`
+	Ceiling       int64  `db:"ceiling"`
+	Increment     int64  `db:"increment"`
+	Cycle         bool   `db:"cycle"`
+	ColumnLimited bool   `db:"column_limited"`
+	OwnedBy       string `db:"owned_by"`
 }
 
 type narrowIdentityRow struct {
@@ -64,12 +68,10 @@ func (sequencesCollector) Assemble(c *model.Context, _ conn.Capabilities, s samp
 	}
 	seq := &model.Sequences{Section: model.Section{Exactness: model.ExactnessScraped}}
 	for _, r := range ss.Seqs {
-		if r.Ceiling <= 0 {
-			continue
-		}
 		seq.Items = append(seq.Items, model.SequenceUsage{
 			Schema: r.Schema, Name: r.Name, LastValue: r.LastValue, Ceiling: r.Ceiling,
-			PctUsed: round4(float64(r.LastValue) / float64(r.Ceiling)), OwnedBy: r.OwnedBy,
+			PctUsed: round4(sequencePctUsed(r)), OwnedBy: r.OwnedBy,
+			Floor: r.Floor, Increment: r.Increment, Cycle: r.Cycle, ColumnLimited: r.ColumnLimited,
 		})
 	}
 	for _, r := range ss.Narrow {
@@ -78,4 +80,18 @@ func (sequencesCollector) Assemble(c *model.Context, _ conn.Capabilities, s samp
 		})
 	}
 	c.Sequences = seq
+}
+
+func sequencePctUsed(r sequenceRow) float64 {
+	if r.Increment == 0 || r.Floor >= r.Ceiling || r.LastValue < r.Floor || r.LastValue > r.Ceiling {
+		return 1
+	}
+	span := uint64(r.Ceiling) - uint64(r.Floor)
+	var position uint64
+	if r.Increment < 0 {
+		position = uint64(r.Ceiling) - uint64(r.LastValue)
+	} else {
+		position = uint64(r.LastValue) - uint64(r.Floor)
+	}
+	return float64(position) / float64(span)
 }
