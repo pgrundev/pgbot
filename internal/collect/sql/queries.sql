@@ -22,6 +22,10 @@ SELECT queryid,
        sum(%[1]s) OVER ()  AS total_exec_all
 FROM %[2]s
 WHERE queryid IS NOT NULL AND calls > 0
+  -- pg_stat_statements is cluster-wide; scope it to the database connected to,
+  -- or a pg_read_all_stats role sees (and reports as this database's) every
+  -- other database's statements.
+  AND dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
   AND query NOT ILIKE '%%pg_stat_statements%%'
   -- Drop transaction-control and session GUC statements. They dominate a quiet
   -- database's counters (SET/BEGIN/COMMIT run on every connection) but are never

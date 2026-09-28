@@ -192,12 +192,16 @@ func topSlowSelects(ctx context.Context, t *conn.Target, top int) ([]advisor.Que
 	// col comes from a fixed allowlist (StatStatementsTotalCol), never user input;
 	// the view is addressed by its schema-qualified name (Pgss) so a
 	// pg_stat_statements installed outside public (Supabase's "extensions") is
-	// found regardless of the role's search_path (issue #10).
+	// found regardless of the role's search_path (issue #10). pg_stat_statements
+	// is cluster-wide: without the dbid filter a role with pg_read_all_stats gets
+	// other databases' statements, which cannot be planned here (or plan against a
+	// same-named relation in this database and yield a bogus index).
 	sql := fmt.Sprintf(`
 		SELECT queryid, left(query, 4000) AS q, calls,
 		       100.0 * %[1]s / nullif(sum(%[1]s) OVER (), 0) AS share
 		FROM %[2]s
 		WHERE queryid IS NOT NULL AND calls > 0
+		  AND dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
 		  AND query ~* '^\s*select\M'
 		ORDER BY %[1]s DESC
 		LIMIT $1`, col, t.Caps.Pgss("pg_stat_statements"))
