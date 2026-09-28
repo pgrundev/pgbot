@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// PR 107 regression guard: pg_stat_statements is cluster-wide, and the
-// pg_read_all_stats grant that pgbot's pg_monitor role carries can read EVERY
+// Regression guard: pg_stat_statements is cluster-wide, and a role holding
+// pg_read_all_stats (directly or through pg_monitor) can read EVERY
 // database's rows from it. Without an explicit scope, pgbot connects to
 // database A and quietly reports database B's statements as A's top queries —
 // cross-database leakage in every snapshot. queries.sql must therefore pin
