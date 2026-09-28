@@ -23,8 +23,18 @@ import (
 // times. Connections are serial by default; --parallel caps concurrency, because
 // opening N connections to a cluster that already fired connection_saturation
 // would be the wrong default.
+type listDatabasesFunc func(context.Context, string) ([]string, error)
+type inspectDatabaseFunc func(context.Context, string, string, inspectFlags) (*model.Context, error)
+
+// Keep the PostgreSQL boundary replaceable so a subprocess test can exercise
+// the real CLI parsing, fanout, rendering, and process-exit path deterministically.
+var (
+	allDatabasesList    listDatabasesFunc   = listAllDatabases
+	allDatabasesInspect inspectDatabaseFunc = inspectOne
+)
+
 func runInspectAll(ctx context.Context, connString string, f inspectFlags) error {
-	dbs, err := listAllDatabases(ctx, connString)
+	dbs, err := allDatabasesList(ctx, connString)
 	if err != nil {
 		return fmt.Errorf("list databases: %s", conn.RedactConnString(err.Error()))
 	}
@@ -47,7 +57,7 @@ func runInspectAll(ctx context.Context, connString string, f inspectFlags) error
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			c, err := inspectOne(ctx, connString, db, f)
+			c, err := allDatabasesInspect(ctx, connString, db, f)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "pgbot: skipping %s: %s\n", db, conn.RedactConnString(err.Error()))
 				mu.Lock()
@@ -86,6 +96,11 @@ func runInspectAll(ctx context.Context, connString string, f inspectFlags) error
 		if code := exitCode(c.Findings, f.failOn); code > worst {
 			worst = code
 		}
+	}
+	// A report can still be useful when one database is unavailable, but the
+	// process must not describe an incomplete cluster inspection as successful.
+	if firstErr != nil {
+		worst = exitFailure
 	}
 
 	if err := renderAll(out, f); err != nil {
