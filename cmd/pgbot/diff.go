@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -33,8 +34,8 @@ func newDiffCmd() *cobra.Command {
 			"reset or pg_stat_statements eviction between the snapshots makes specific deltas\n" +
 			"untrustworthy. It never compares two different databases.",
 		Args: cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return runDiff(f)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runDiff(cmd.OutOrStdout(), f)
 		},
 	}
 	fl := cmd.Flags()
@@ -109,7 +110,7 @@ func resolveDiff(storePath, fpSpec string, since time.Duration) (*diffResult, er
 	}, nil
 }
 
-func runDiff(f diffFlags) error {
+func runDiff(w io.Writer, f diffFlags) error {
 	r, err := resolveDiff(f.storePath, f.fingerprint, f.since)
 	if err != nil {
 		return err
@@ -117,13 +118,12 @@ func runDiff(f diffFlags) error {
 	if f.json {
 		return json.NewEncoder(os.Stdout).Encode(diffJSON(r))
 	}
-	render.DiffReport(os.Stdout, render.DiffInput{
+	return render.DiffReport(w, render.DiffInput{
 		Color: useColor(f.noColor), Database: r.Item.Database, Fingerprint: r.Item.Fingerprint,
 		BaselineAt: r.Baseline.CollectedAt, CurrentAt: r.Current.CollectedAt,
 		Requested: r.Requested, Actual: r.Actual,
 		ResetReason: r.ResetReason, PgssEvicted: r.PgssEvicted, Deltas: r.Deltas,
 	})
-	return nil
 }
 
 // diffJSON is the machine-readable shape of a diff, shared by --json and the MCP
