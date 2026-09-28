@@ -168,7 +168,7 @@ func TestAnalyze_indexDroppedAntecedent(t *testing.T) {
 	}
 }
 
-// Fewer than 3 snapshots: no chains, and the report says exactly what to do.
+// Fewer than MinSnapshots: no chains, and the report says exactly what to do.
 func TestAnalyze_insufficientHistory(t *testing.T) {
 	r := Analyze(flagshipHistory()[:2], nil, Options{})
 	if len(r.Chains) != 0 {

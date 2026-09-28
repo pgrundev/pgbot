@@ -14,6 +14,7 @@ import (
 	"github.com/pgrundev/pgbot/internal/model"
 	"github.com/pgrundev/pgbot/internal/render"
 	"github.com/pgrundev/pgbot/internal/store"
+	"github.com/pgrundev/pgbot/internal/why"
 	"github.com/spf13/cobra"
 )
 
@@ -132,12 +133,12 @@ func pgbotTools() []mcp.Tool {
 		},
 		{
 			Name: "why",
-			Description: "Explain a regression from stored baseline history: causal chains — symptom ← " +
-				"mechanism ← antecedent (e.g. a query slowed BECAUSE seq scans surged on a table it reads " +
-				"AFTER the table grew) — with the numbers and onset times for every hop. Computed " +
-				"deterministically from snapshot history in the local store; no connection is made. " +
-				"Needs at least 3 stored snapshots (each inspect adds one). Confidence below 0.5 is a " +
-				"possibility, not a diagnosis.",
+			Description: fmt.Sprintf("Explain a regression from stored baseline history: causal chains — symptom ← "+
+				"mechanism ← antecedent (e.g. a query slowed BECAUSE seq scans surged on a table it reads "+
+				"AFTER the table grew) — with the numbers and onset times for every hop. Computed "+
+				"deterministically from snapshot history in the local store; no connection is made. "+
+				"Needs at least %d stored snapshots (each inspect adds one). Confidence below 0.5 is a "+
+				"possibility, not a diagnosis.", why.MinSnapshots),
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{

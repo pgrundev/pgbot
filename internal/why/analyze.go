@@ -62,8 +62,9 @@ type Report struct {
 
 const whySchemaVersion = "1.1.0"
 
-// minSamples is the least history an onset can stand on.
-const minSamples = 3
+// MinSnapshots is the least history an interval-series onset can stand on:
+// four snapshots produce the three points detectShift requires.
+const MinSnapshots = 4
 
 // growthAntecedentPct is the first-to-last table growth that counts as a
 // planner-flip antecedent for a seq-scan surge.
@@ -78,10 +79,10 @@ func Analyze(samples []Sample, events []model.Event, opts Options) Report {
 		r.WindowStart, r.WindowEnd = samples[0].At, samples[n-1].At
 		r.Snapshots = n
 	}
-	if len(samples) < minSamples {
+	if len(samples) < MinSnapshots {
 		r.Notes = append(r.Notes, fmt.Sprintf(
 			"only %d snapshot(s) in the window — pgbot needs at least %d to tell a change from a baseline. Run `pgbot inspect` a few times as the workload runs (each run stores one), then come back.",
-			len(samples), minSamples))
+			len(samples), MinSnapshots))
 		return r
 	}
 
