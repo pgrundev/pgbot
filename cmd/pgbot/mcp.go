@@ -80,6 +80,7 @@ func pgbotTools() []mcp.Tool {
 			Name: "top_queries",
 			Description: "Top statements from pg_stat_statements ranked by cumulative total execution " +
 				"time, each with its share of total DB exec time (share_pct), call count, and mean ms. " +
+				"The enabled flag reports extension presence; available reports successful collection. " +
 				"Answers 'which query is eating the database.' Query text is normalized ($1 placeholders) " +
 				"— no literals. Transaction-control/SET noise is filtered. Read-only.",
 			InputSchema: dsnSchema,
@@ -349,14 +350,23 @@ func topQueriesTool(ctx context.Context, args json.RawMessage) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	c, _, err := gather(ctx, dsn, inspectFlags{interval: time.Second, ashHz: 0, noStore: true})
+	c, _, err := gatherQueryContext(ctx, dsn, inspectFlags{interval: time.Second, ashHz: 0, noStore: true})
 	if err != nil {
 		return "", err
 	}
-	out := map[string]any{"enabled": false, "ranked_by": "total_exec_time", "queries": []any{}}
+	out := map[string]any{"enabled": false, "available": false, "ranked_by": "total_exec_time", "queries": []any{}}
 	switch {
-	case c.Queries != nil && c.Queries.Enabled:
+	case c.Queries == nil:
+	case !c.Queries.Enabled:
+		if c.Queries.Reason != "" {
+			out["reason"] = c.Queries.Reason
+		}
+	case c.Queries.Exactness == model.ExactnessUnavailable:
 		out["enabled"] = true
+		out["reason"] = queryStatsReadFailed
+	default:
+		out["enabled"] = true
+		out["available"] = true
 		out["total_exec_ms"] = c.Queries.TotalExecMS
 		rows := make([]map[string]any, 0, len(c.Queries.Top))
 		for _, q := range c.Queries.Top {
@@ -370,8 +380,6 @@ func topQueriesTool(ctx context.Context, args json.RawMessage) (string, error) {
 			})
 		}
 		out["queries"] = rows
-	case c.Queries != nil && c.Queries.Reason != "":
-		out["reason"] = c.Queries.Reason
 	}
 	b, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
