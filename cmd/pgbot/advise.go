@@ -276,15 +276,16 @@ type pgxPlanner struct {
 func (p pgxPlanner) hypo(fn string) string { return p.caps.ExtObject("hypopg", fn) }
 
 func (p pgxPlanner) GenericPlan(ctx context.Context, query string) ([]byte, error) {
-	// GENERIC_PLAN plans a normalized $N query without values; FORMAT JSON gives one
-	// row. This MUST use the raw simple-query protocol (PgConn.Exec): both the
+	// GENERIC_PLAN plans a normalized $N query without values; VERBOSE preserves
+	// each resolved relation's schema in FORMAT JSON, which gives one row. This
+	// MUST use the raw simple-query protocol (PgConn.Exec): both the
 	// extended protocol and pgx's SimpleProtocol mode treat the $1/$2 inside the
 	// EXPLAIN'd query as bind parameters of the OUTER statement and demand values
 	// ("expected 2 arguments, got 0"). GENERIC_PLAN exists precisely to plan those
 	// placeholders WITHOUT values, so the SQL must reach the server byte-for-byte.
 	var js []byte
 	err := p.inSavepoint(ctx, func() error {
-		res, err := p.tx.Conn().PgConn().Exec(ctx, "EXPLAIN (GENERIC_PLAN, FORMAT JSON) "+query).ReadAll()
+		res, err := p.tx.Conn().PgConn().Exec(ctx, "EXPLAIN (GENERIC_PLAN, VERBOSE, FORMAT JSON) "+query).ReadAll()
 		if err != nil {
 			return err
 		}
