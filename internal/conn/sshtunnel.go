@@ -4,9 +4,9 @@ package conn
 // DSN's host resolves to, which leaves out every database that only answers from
 // inside a bastion, a VPN-routed jump host, or a private VPC subnet.
 //
-// The tunnel is installed as pgx's DialFunc rather than as a local port forward.
-// That distinction matters: pgconn documents DialFunc as running BEFORE TLS is
-// established, so the DSN keeps naming the REAL host all the way through.
+// The tunnel is installed as the driver's DialFunc (pggo.Config.DialFunc) rather
+// than as a local port forward. That distinction matters: DialFunc runs BEFORE
+// TLS is negotiated, so the DSN keeps naming the REAL host all the way through.
 // sslmode=verify-full still validates against that hostname, and .pgpass still
 // matches on it. A `ssh -L` forward would force the DSN to say 127.0.0.1 and
 // silently break both, besides leaving a port open to every local user.
@@ -77,8 +77,8 @@ func CloseSSHTunnel() {
 }
 
 // sshDialFunc returns a dialer that opens the database connection as a channel on
-// the SSH connection, or nil when no tunnel is configured (pgx then keeps its own
-// default dialer, timeouts included).
+// the SSH connection, or nil when no tunnel is configured (the driver then keeps
+// its own default dialer, timeouts included).
 func sshDialFunc() func(context.Context, string, string) (net.Conn, error) {
 	if !SSHTunnelActive() {
 		return nil
@@ -559,8 +559,8 @@ func expandTilde(p string) string {
 	return p
 }
 
-// warnOnce prints a per-key diagnostic a single time. pgx dials more than once
-// (probe, then each pool connection, then any fallback host), and repeating the
+// warnOnce prints a per-key diagnostic a single time. The driver dials more than
+// once (probe, then each pool connection, then any cancel request), and repeating the
 // same "skipping key" line four times reads like four different problems.
 var warned sync.Map
 

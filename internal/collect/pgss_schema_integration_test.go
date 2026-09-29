@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/pgrundev/pgbot/internal/collect"
 	"github.com/pgrundev/pgbot/internal/conn"
 	"github.com/pgrundev/pgbot/internal/model"
+	"github.com/pgrundev/pggo"
 )
 
 // Issue #10: pg_stat_statements installed outside public (Supabase's
@@ -29,13 +29,13 @@ func TestIntegration_pgssInNonDefaultSchema(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	admin, err := pgx.Connect(ctx, su)
+	admin, err := pggo.Connect(ctx, su)
 	if err != nil {
 		t.Fatalf("admin connect: %v", err)
 	}
 	// Registered before the restore cleanup below: cleanups run last-in-first-out,
 	// so the extension is moved back on a still-open connection.
-	t.Cleanup(func() { admin.Close(context.Background()) })
+	t.Cleanup(func() { admin.Close() })
 
 	var installed bool
 	if err := admin.QueryRow(ctx, `SELECT count(*) > 0 FROM pg_extension WHERE extname = 'pg_stat_statements'`).Scan(&installed); err != nil {
@@ -53,12 +53,12 @@ func TestIntegration_pgssInNonDefaultSchema(t *testing.T) {
 	// the read-only role can see the objects — the point is that they are found
 	// by *qualified* name, not via search_path.
 	const relocated = "pgbot_ext_test"
-	if _, err := admin.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS `+relocated+`; GRANT USAGE ON SCHEMA `+relocated+` TO PUBLIC; ALTER EXTENSION pg_stat_statements SET SCHEMA `+relocated); err != nil {
+	if _, err := admin.SimpleQuery(ctx, `CREATE SCHEMA IF NOT EXISTS `+relocated+`; GRANT USAGE ON SCHEMA `+relocated+` TO PUBLIC; ALTER EXTENSION pg_stat_statements SET SCHEMA `+relocated); err != nil {
 		t.Fatalf("relocate extension: %v", err)
 	}
 	t.Cleanup(func() {
 		c := context.Background()
-		if _, err := admin.Exec(c, `ALTER EXTENSION pg_stat_statements SET SCHEMA `+pgx.Identifier{origSchema}.Sanitize()+`; DROP SCHEMA IF EXISTS `+relocated); err != nil {
+		if _, err := admin.SimpleQuery(c, `ALTER EXTENSION pg_stat_statements SET SCHEMA `+pggo.QuoteIdentifier(origSchema)+`; DROP SCHEMA IF EXISTS `+relocated); err != nil {
 			t.Errorf("restore extension schema: %v", err)
 		}
 	})

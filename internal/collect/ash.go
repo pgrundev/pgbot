@@ -6,9 +6,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/pgrundev/pgbot/internal/conn"
 	"github.com/pgrundev/pgbot/internal/model"
+	"github.com/pgrundev/pggo"
 )
 
 // WaitSample is one observation of one active backend at one instant. Nil
@@ -71,7 +71,7 @@ type ashResult struct {
 // interval: at the default 10 Hz that would be 100 ms, and a poll over a
 // normal-latency link (a laptop or CI reaching RDS/Neon/Supabase at 30–100 ms
 // RTT) cannot complete in that — every poll timed out, every timeout tore down
-// its pool connection (pgx closes a connection whose context expires mid-query)
+// its pool connection (the driver closes a connection whose context expires mid-query)
 // and the profile came back "all N polls errored" while the report said nothing.
 // With a fixed budget the sampler runs at min(hz, what the round trip allows)
 // instead of 0 (PR#1).
@@ -108,7 +108,7 @@ func sampleWaitsOpt(ctx context.Context, t *conn.Target, caps conn.Capabilities,
 			res.failures++ // drop this poll, keep going
 			return
 		}
-		got, err := pgx.CollectRows(rows, pgx.RowToStructByNameLax[WaitSample])
+		got, err := pggo.CollectStructs[WaitSample](rows)
 		if err != nil {
 			res.failures++
 			return

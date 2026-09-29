@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/pgrundev/pgbot/internal/collect"
 	"github.com/pgrundev/pgbot/internal/conn"
 	"github.com/pgrundev/pgbot/internal/model"
+	"github.com/pgrundev/pggo"
 )
 
 // TestIntegration_schemaProfile_acceptance is the D3 acceptance test (DoD 9 & 10):
@@ -27,11 +27,11 @@ func TestIntegration_schemaProfile_acceptance(t *testing.T) {
 	ctx := context.Background()
 	const dbName = "pgbot_d3_accept"
 
-	admin, err := pgx.Connect(ctx, su)
+	admin, err := pggo.Connect(ctx, su)
 	if err != nil {
 		t.Fatalf("admin connect: %v", err)
 	}
-	defer admin.Close(ctx)
+	defer admin.Close()
 	_, _ = admin.Exec(ctx, `DROP DATABASE IF EXISTS `+dbName+` WITH (FORCE)`)
 	if _, err := admin.Exec(ctx, `CREATE DATABASE `+dbName); err != nil {
 		t.Fatalf("create db: %v", err)
@@ -41,11 +41,11 @@ func TestIntegration_schemaProfile_acceptance(t *testing.T) {
 	dsn := swapDatabase(t, su, dbName)
 
 	// A sound schema: bigint keys, the FK is indexed, no invalid/redundant indexes.
-	fixture, err := pgx.Connect(ctx, dsn)
+	fixture, err := pggo.Connect(ctx, dsn)
 	if err != nil {
 		t.Fatalf("fixture connect: %v", err)
 	}
-	defer fixture.Close(ctx)
+	defer fixture.Close()
 	mustExec(t, ctx, fixture,
 		`CREATE TABLE users (id bigserial PRIMARY KEY, email text)`,
 		`CREATE TABLE orders (id bigserial PRIMARY KEY, user_id bigint REFERENCES users(id), total numeric)`,
@@ -86,7 +86,7 @@ func TestIntegration_schemaProfile_acceptance(t *testing.T) {
 
 func swapDatabase(t *testing.T, dsn, db string) string {
 	t.Helper()
-	cfg, err := pgx.ParseConfig(dsn)
+	cfg, err := pggo.ParseConfig(dsn)
 	if err != nil {
 		t.Fatalf("parse dsn: %v", err)
 	}
@@ -100,7 +100,7 @@ func swapDatabase(t *testing.T, dsn, db string) string {
 	return u.String()
 }
 
-func mustExec(t *testing.T, ctx context.Context, c *pgx.Conn, stmts ...string) {
+func mustExec(t *testing.T, ctx context.Context, c *pggo.Conn, stmts ...string) {
 	t.Helper()
 	tctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()

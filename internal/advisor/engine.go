@@ -6,7 +6,7 @@ import (
 )
 
 // Planner is the minimal database surface the advisor drives. Implemented over a
-// pgx READ ONLY transaction in the command; mocked in tests. Every method is a
+// READ ONLY transaction in the command; mocked in tests. Every method is a
 // plan-only or hypothetical operation — none executes the inspected query or
 // writes anything.
 type Planner interface {

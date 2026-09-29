@@ -25,7 +25,7 @@ func firstNonEmpty(vals ...string) string {
 }
 
 // pgServiceFallback lets a bare $PGSERVICE select a connection when neither an
-// argument nor $DATABASE_URL/$PGBOT_DATABASE_URL is set. pgx's ParseConfig
+// argument nor $DATABASE_URL/$PGBOT_DATABASE_URL is set. pggo.ParseConfig
 // already reads a connection service file (PGSERVICEFILE, or the libpq
 // default path) once it gets a "service=..." string — this just builds that
 // string so users who manage connections through a service file don't have
@@ -69,10 +69,10 @@ func terminalWidth() int {
 // hostPort pulls the host/port off the pool's config for the baseline
 // fingerprint fallback (used only when the system identifier isn't readable).
 func hostPort(t *conn.Target) (string, string) {
-	cfg := t.Pool.Config().ConnConfig
+	cfg := t.Pool.Config()
 	port := "5432"
 	if cfg.Port != 0 {
-		port = strconv.Itoa(int(cfg.Port))
+		port = strconv.Itoa(cfg.Port)
 	}
 	return cfg.Host, port
 }

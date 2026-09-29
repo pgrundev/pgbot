@@ -10,9 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/pgrundev/pgbot/internal/conn"
+	"github.com/pgrundev/pggo"
 )
 
 // TestDocVerifyQueries_run executes every "How to verify it yourself" SQL query
@@ -38,11 +37,11 @@ func TestIntegration_docVerifyQueries(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	admin, err := pgx.Connect(ctx, d)
+	admin, err := pggo.Connect(ctx, d)
 	if err != nil {
 		t.Fatalf("admin connect: %v", err)
 	}
-	defer admin.Close(ctx)
+	defer admin.Close()
 
 	var vnum int
 	if err := admin.QueryRow(ctx, "SELECT current_setting('server_version_num')::int").Scan(&vnum); err != nil {
@@ -54,7 +53,7 @@ func TestIntegration_docVerifyQueries(t *testing.T) {
 
 	// Example objects the pages reference by name (public.issues.last_seen_at,
 	// public.orders). Everything else is catalog views with literal filters.
-	if _, err := admin.Exec(ctx, `
+	if _, err := admin.SimpleQuery(ctx, `
 		CREATE EXTENSION IF NOT EXISTS pgstattuple;
 		CREATE TABLE IF NOT EXISTS public.orders (id bigserial primary key, customer_id int, status int, amount numeric, note text);
 		CREATE TABLE IF NOT EXISTS public.issues (id bigserial primary key, last_seen_at timestamptz, project_id int)`); err != nil {
@@ -76,7 +75,7 @@ func TestIntegration_docVerifyQueries(t *testing.T) {
 		}
 		for _, stmt := range splitStatements(b.sql) {
 			ran++
-			err := target.ReadOnlyTx(ctx, func(tx pgx.Tx) error {
+			err := target.ReadOnlyTx(ctx, func(tx *pggo.Tx) error {
 				_, e := tx.Exec(ctx, stmt)
 				return e
 			})
@@ -160,7 +159,7 @@ func splitStatements(block string) []string {
 // tolerated reports whether an error is the known pg_stat_bgwriter column move
 // (columns relocated to pg_stat_checkpointer in PG17) rather than a real defect.
 func tolerated(stmt string, err error) bool {
-	var pg *pgconn.PgError
+	var pg *pggo.PgError
 	if !errors.As(err, &pg) {
 		return false
 	}

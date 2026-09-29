@@ -6,26 +6,40 @@ package conn
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgrundev/pggo"
 )
 
-// clientOnlyParams are libpq connection parameters that pgx/pgconn does NOT
-// recognize and so forwards to the server as startup GUCs — where the server
-// rejects them ("unrecognized configuration parameter"). Managed providers
-// (pgrun, Neon) ship channel_binding in their default connection strings. pgx
-// can't implement SCRAM channel binding anyway, so we drop it; TLS from sslmode
-// still applies — channel binding was hardening on top of that.
+// clientOnlyParams are libpq connection parameters the driver accepts but cannot
+// honor. Managed providers (pgrun, Neon) ship channel_binding in their default
+// connection strings; pgGo does not implement SCRAM channel binding, so it is
+// dropped (never sent as a server GUC) and we say so. TLS from sslmode still
+// applies — channel binding was hardening on top of that.
 var clientOnlyParams = []string{"channel_binding"}
+
+// hasConnParam reports whether a URL or keyword=value connection string sets key.
+func hasConnParam(connString, key string) bool {
+	if strings.HasPrefix(connString, "postgres://") || strings.HasPrefix(connString, "postgresql://") {
+		u, err := url.Parse(connString)
+		return err == nil && u.Query().Has(key)
+	}
+	for _, f := range strings.Fields(connString) {
+		if strings.HasPrefix(f, key+"=") {
+			return true
+		}
+	}
+	return false
+}
 
 // Target is a configured, capability-probed connection to one database. The
 // pool is small (max 4) so a burst of concurrent collectors can't itself become
 // a connection storm on the database it was invoked to inspect.
 type Target struct {
-	Pool   *pgxpool.Pool
+	Pool   *pggo.Pool
 	Caps   Capabilities
 	Pooler PoolerInfo
 	self   *selfPIDs // backend PIDs of our own pool connections; see ExcludeSelf
@@ -56,26 +70,19 @@ func ConnectDBAt(ctx context.Context, connString, database, host string) (*Targe
 }
 
 func connect(ctx context.Context, connString, database, host string) (*Target, error) {
-	cfg, err := pgxpool.ParseConfig(connString)
+	cfg, err := pggo.ParseConfig(connString)
 	if err != nil {
 		return nil, fmt.Errorf("parse connection string: %w", err)
 	}
 	if database != "" {
-		cfg.ConnConfig.Database = database
+		cfg.Database = database
 	}
 	if host != "" {
-		cfg.ConnConfig.Host = host
-		cfg.ConnConfig.Fallbacks = nil // a multi-host DSN names the cluster, not this member
-		if tc := cfg.ConnConfig.TLSConfig; tc != nil {
-			tc = tc.Clone()
-			tc.ServerName = host
-			cfg.ConnConfig.TLSConfig = tc
-		}
+		// The TLS server name follows Config.Host, so verify-full checks this
+		// member's own certificate.
+		cfg.Host = host
 	}
-	cfg.MaxConns = maxConns
-	cfg.MinConns = 0
-	cfg.MaxConnLifetime = 5 * time.Minute
-	cfg.ConnConfig.RuntimeParams["application_name"] = "pgbot"
+	cfg.RuntimeParams["application_name"] = "pgbot"
 
 	// Route the TCP leg through the SSH jump host when one is configured. This has
 	// to happen before probe(): the probe connection dials too, and it must take
@@ -83,31 +90,25 @@ func connect(ctx context.Context, connString, database, host string) (*Target, e
 	// to a local forward is what keeps sslmode= and .pgpass matching on the real
 	// hostname — see sshtunnel.go.
 	if dial := sshDialFunc(); dial != nil {
-		cfg.ConnConfig.DialFunc = dial
-		// Let the SSH server resolve database hostnames.
-		cfg.ConnConfig.LookupFunc = func(_ context.Context, host string) ([]string, error) {
-			return []string{host}, nil
-		}
+		// pgGo never resolves the host itself: DialFunc receives host:port, so
+		// the SSH server resolves database hostnames.
+		cfg.DialFunc = dial
 	}
 
-	// Drop client-only params pgx forwarded into RuntimeParams (it would send them
-	// as server GUCs, which the server rejects). See clientOnlyParams.
+	// The driver never sends client-only params to the server. See clientOnlyParams.
 	for _, p := range clientOnlyParams {
-		if _, ok := cfg.ConnConfig.RuntimeParams[p]; ok {
-			delete(cfg.ConnConfig.RuntimeParams, p)
+		if hasConnParam(connString, p) {
 			fmt.Fprintf(os.Stderr, "pgbot: ignoring connection param %q — the driver can't honor it; TLS from sslmode still applies\n", p)
 		}
 	}
 
 	// Probe capabilities + pooler on a throwaway connection first, so AfterConnect
-	// applies only the GUCs this server understands and the pool uses the right
-	// wire protocol.
-	caps, pooler, probePID, err := probe(ctx, cfg.ConnConfig.Copy())
+	// applies only the GUCs this server understands. (Behind a transaction pooler
+	// no protocol switch is needed: pgGo only uses the unnamed statement, parsed
+	// and executed within one Sync, which poolers route as a unit.)
+	caps, pooler, probePID, err := probe(ctx, cfg.Copy())
 	if err != nil {
 		return nil, err
-	}
-	if pooler.SimpleProtocol {
-		cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
 	}
 
 	// Track our own backend PIDs so collectors can exclude every pgbot connection
@@ -116,21 +117,21 @@ func connect(ctx context.Context, connString, database, host string) (*Target, e
 	// filters historical log lines by PID, and the probe wrote some.
 	self := newSelfPIDs()
 	self.add(probePID)
-	cfg.AfterConnect = func(ctx context.Context, c *pgx.Conn) error {
-		if err := applySessionSetup(ctx, c, caps); err != nil {
-			return err
-		}
-		self.add(c.PgConn().PID())
-		return nil
-	}
-	cfg.BeforeClose = func(c *pgx.Conn) {
-		self.remove(c.PgConn().PID())
-	}
-
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		return nil, fmt.Errorf("open pool: %w", err)
-	}
+	pool := pggo.NewPool(pggo.PoolConfig{
+		Config:          cfg,
+		MaxConns:        maxConns,
+		MaxConnLifetime: 5 * time.Minute,
+		AfterConnect: func(ctx context.Context, c *pggo.Conn) error {
+			if err := applySessionSetup(ctx, c, caps); err != nil {
+				return err
+			}
+			self.add(c.PID())
+			return nil
+		},
+		BeforeClose: func(c *pggo.Conn) {
+			self.remove(c.PID())
+		},
+	})
 	return &Target{Pool: pool, Caps: caps, Pooler: pooler, self: self}, nil
 }
 
@@ -152,7 +153,7 @@ func (t *Target) Warm(ctx context.Context) {
 	if t.Pool == nil {
 		return
 	}
-	held := make([]*pgxpool.Conn, 0, maxConns)
+	held := make([]*pggo.PoolConn, 0, maxConns)
 	for i := 0; i < maxConns; i++ {
 		c, err := t.Pool.Acquire(ctx)
 		if err != nil {
@@ -185,7 +186,7 @@ var sessionPins = []struct{ name, value string }{
 // rather than pgbot. Only the settings collector needs it. stats_fetch_consistency
 // (PG15+, also pinned) is left alone: it isn't a tuning parameter, and a SET LOCAL
 // of an unknown GUC would abort the transaction on PG < 15.
-func UnpinLocal(ctx context.Context, tx pgx.Tx) error {
+func UnpinLocal(ctx context.Context, tx *pggo.Tx) error {
 	for _, p := range sessionPins {
 		if _, err := tx.Exec(ctx, "SET LOCAL "+p.name+" = DEFAULT"); err != nil {
 			return fmt.Errorf("unpin %s: %w", p.name, err)
@@ -197,7 +198,7 @@ func UnpinLocal(ctx context.Context, tx pgx.Tx) error {
 // applySessionSetup pins every physical connection. statement_timeout and
 // lock_timeout are mandatory: pgbot must never become the incident it was
 // invoked to diagnose.
-func applySessionSetup(ctx context.Context, c *pgx.Conn, caps Capabilities) error {
+func applySessionSetup(ctx context.Context, c *pggo.Conn, caps Capabilities) error {
 	stmts := []string{"SET application_name = 'pgbot'"}
 	for _, p := range sessionPins {
 		stmts = append(stmts, "SET "+p.name+" = "+p.value)
@@ -220,21 +221,16 @@ func applySessionSetup(ctx context.Context, c *pgx.Conn, caps Capabilities) erro
 // probe reads server_version_num, installed extensions, role membership, and
 // the system identifier in one round trip (with a best-effort fallback for the
 // identifier, which needs elevated read access on some managed providers).
-func probe(ctx context.Context, cc *pgx.ConnConfig) (Capabilities, PoolerInfo, uint32, error) {
-	c, err := pgx.ConnectConfig(ctx, cc)
+func probe(ctx context.Context, cc *pggo.Config) (Capabilities, PoolerInfo, uint32, error) {
+	c, err := pggo.ConnectConfig(ctx, cc)
 	if err != nil {
 		return Capabilities{}, PoolerInfo{}, 0, fmt.Errorf("connect: %w", err)
 	}
-	defer c.Close(ctx)
-	probePID := c.PgConn().PID()
+	defer c.Close()
+	probePID := c.PID()
 
-	// Detect the pooler first — if prepared statements are broken, every later
-	// query on this probe connection must use the simple protocol too.
+	// Detect the pooler first (named prepared statements, session persistence).
 	pooler := detectPooler(ctx, c, cc)
-	mode := []any{}
-	if pooler.SimpleProtocol {
-		mode = []any{pgx.QueryExecModeSimpleProtocol}
-	}
 
 	var caps Capabilities
 	var mk providerMarkers
@@ -258,7 +254,7 @@ func probe(ctx context.Context, cc *pgx.ConnConfig) (Capabilities, PoolerInfo, u
 		       -- counter pgbot reports. to_regprocedure does neither.
 		       to_regprocedure('aurora_version()') IS NOT NULL
 		         OR to_regprocedure('aurora_replica_status()') IS NOT NULL`
-	err = c.QueryRow(ctx, q, mode...).Scan(&caps.VersionNum, &caps.VersionText, &caps.Database,
+	err = c.QueryRow(ctx, q).Scan(&caps.VersionNum, &caps.VersionText, &caps.Database,
 		&caps.StartedAt, &caps.HasStatStatements, &caps.HasHypopg, &caps.HasPgMonitor,
 		&mk.HasRDS, &mk.HasCloudSQL, &mk.HasAzure, &caps.InRecovery, &mk.IsAurora)
 	if err != nil {
@@ -271,7 +267,7 @@ func probe(ctx context.Context, cc *pgx.ConnConfig) (Capabilities, PoolerInfo, u
 	// system_identifier makes the baseline fingerprint survive a restore/rename;
 	// it needs pg_monitor/superuser on some providers, so it's best-effort.
 	var sysID int64
-	if err := c.QueryRow(ctx, `SELECT system_identifier FROM pg_control_system()`, mode...).Scan(&sysID); err == nil {
+	if err := c.QueryRow(ctx, `SELECT system_identifier FROM pg_control_system()`).Scan(&sysID); err == nil {
 		caps.SystemIdentifier = fmt.Sprintf("%d", sysID)
 	}
 
@@ -280,12 +276,12 @@ func probe(ctx context.Context, cc *pgx.ConnConfig) (Capabilities, PoolerInfo, u
 	// by qualified name — Supabase and friends install them in "extensions", off
 	// the read-only role's search_path (issue #10). Best-effort: on failure the
 	// map stays empty and callers fall back to bare names.
-	if rows, err := c.Query(ctx, `SELECT e.extname, n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace ORDER BY e.extname`, mode...); err == nil {
+	if rows, err := c.Query(ctx, `SELECT e.extname, n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace ORDER BY e.extname`); err == nil {
 		type extRow struct {
 			Name   string
 			Schema string
 		}
-		if exts, err := pgx.CollectRows(rows, pgx.RowToStructByPos[extRow]); err == nil {
+		if exts, err := pggo.CollectStructsByPos[extRow](rows); err == nil {
 			caps.ExtensionSchemas = make(map[string]string, len(exts))
 			for _, e := range exts {
 				caps.Extensions = append(caps.Extensions, e.Name)
@@ -299,8 +295,8 @@ func probe(ctx context.Context, cc *pgx.ConnConfig) (Capabilities, PoolerInfo, u
 // ReadOnlyTx runs fn inside its own short READ ONLY transaction and always rolls
 // back. Each collector sample gets a fresh transaction — that, plus
 // stats_fetch_consistency='none', is what keeps double-sampled rates non-zero.
-func (t *Target) ReadOnlyTx(ctx context.Context, fn func(pgx.Tx) error) error {
-	tx, err := t.Pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+func (t *Target) ReadOnlyTx(ctx context.Context, fn func(*pggo.Tx) error) error {
+	tx, err := t.Pool.BeginTx(ctx, pggo.TxOptions{ReadOnly: true})
 	if err != nil {
 		return err
 	}

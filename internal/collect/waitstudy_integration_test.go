@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/pgrundev/pgbot/internal/conn"
+	"github.com/pgrundev/pggo"
 )
 
 // A real two-session lock conflict must produce a SUSTAINED blocker with the
@@ -24,11 +24,11 @@ func TestIntegration_waitStudy_namesTheBlocker(t *testing.T) {
 	ctx := context.Background()
 
 	// Holder: an open transaction owning the advisory lock.
-	holder, err := pgx.Connect(ctx, dsn)
+	holder, err := pggo.Connect(ctx, dsn)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	defer holder.Close(context.Background())
+	defer holder.Close()
 	tx, err := holder.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -42,11 +42,11 @@ func TestIntegration_waitStudy_namesTheBlocker(t *testing.T) {
 	victimDone := make(chan struct{})
 	go func() {
 		defer close(victimDone)
-		v, err := pgx.Connect(ctx, dsn)
+		v, err := pggo.Connect(ctx, dsn)
 		if err != nil {
 			return
 		}
-		defer v.Close(context.Background())
+		defer v.Close()
 		vctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
 		_, _ = v.Exec(vctx, `SELECT pg_advisory_xact_lock(987654321012345)`)

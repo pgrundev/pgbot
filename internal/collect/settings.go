@@ -5,9 +5,9 @@ import (
 	_ "embed"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/pgrundev/pgbot/internal/conn"
 	"github.com/pgrundev/pgbot/internal/model"
+	"github.com/pgrundev/pggo"
 )
 
 //go:embed sql/settings.sql
@@ -35,7 +35,7 @@ func (settingsCollector) Sample(ctx context.Context, t *conn.Target, _ conn.Capa
 	// database. UnpinLocal reverts them for this one transaction; the query also
 	// drops session/client-sourced rows from the override set.
 	var rows []settingRow
-	err := t.ReadOnlyTx(ctx, func(tx pgx.Tx) error {
+	err := t.ReadOnlyTx(ctx, func(tx *pggo.Tx) error {
 		if err := conn.UnpinLocal(ctx, tx); err != nil {
 			return err
 		}
@@ -43,7 +43,7 @@ func (settingsCollector) Sample(ctx context.Context, t *conn.Target, _ conn.Capa
 		if err != nil {
 			return err
 		}
-		rows, err = pgx.CollectRows(r, pgx.RowToStructByNameLax[settingRow])
+		rows, err = pggo.CollectStructs[settingRow](r)
 		return err
 	})
 	return rows, err

@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/pgrundev/pgbot/internal/collect"
 	"github.com/pgrundev/pgbot/internal/conn"
 	"github.com/pgrundev/pgbot/internal/model"
+	"github.com/pgrundev/pggo"
 )
 
 // End-to-end wiring guard for the observer-exclusion class, found walking the
@@ -46,16 +46,16 @@ func TestIntegration_selfExclusion_wiring(t *testing.T) {
 	// Hold a real idle-in-transaction session; pgbot must count it. Counting is a
 	// lower bound (background activity can only add), so this stays robust while
 	// still failing if the activity collector stopped counting real sessions.
-	cfg, err := pgx.ParseConfig(d)
+	cfg, err := pggo.ParseConfig(d)
 	if err != nil {
 		t.Fatalf("parse dsn: %v", err)
 	}
 	cfg.RuntimeParams["application_name"] = "pgbot_selftest_app"
-	held, err := pgx.ConnectConfig(ctx, cfg)
+	held, err := pggo.ConnectConfig(ctx, cfg)
 	if err != nil {
 		t.Fatalf("hold connect: %v", err)
 	}
-	defer held.Close(ctx)
+	defer held.Close()
 	if _, err := held.Exec(ctx, "BEGIN READ ONLY"); err != nil {
 		t.Fatalf("begin: %v", err)
 	}

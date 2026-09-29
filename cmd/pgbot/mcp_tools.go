@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/pgrundev/pgbot/docs"
 	"github.com/pgrundev/pgbot/internal/advisor"
 	"github.com/pgrundev/pgbot/internal/conn"
 	"github.com/pgrundev/pgbot/internal/store"
+	"github.com/pgrundev/pggo"
 )
 
 // B8 MCP tools. Every one either produces no findings (explain_plan, schema_of,
@@ -57,8 +57,8 @@ func explainPlanTool(ctx context.Context, args json.RawMessage) (string, error) 
 		stmt = "EXPLAIN (GENERIC_PLAN, FORMAT JSON) " + clean
 	}
 	var planJSON []byte
-	err = target.ReadOnlyTx(ctx, func(tx pgx.Tx) error {
-		res, e := tx.Conn().PgConn().Exec(ctx, stmt).ReadAll()
+	err = target.ReadOnlyTx(ctx, func(tx *pggo.Tx) error {
+		res, e := tx.Conn().SimpleQuery(ctx, stmt)
 		if e != nil {
 			return e
 		}
@@ -129,7 +129,7 @@ func schemaOfTool(ctx context.Context, args json.RawMessage) (string, error) {
 
 	out := map[string]any{"table": a.Table, "exactness": "scraped", "note": "catalog metadata only — no table data is read; the row count is the planner's estimate (reltuples)."}
 	// The table name is passed as a bind parameter cast to regclass — never spliced.
-	err = target.ReadOnlyTx(ctx, func(tx pgx.Tx) error {
+	err = target.ReadOnlyTx(ctx, func(tx *pggo.Tx) error {
 		var relTuples int64
 		var totalBytes int64
 		if e := tx.QueryRow(ctx, `SELECT reltuples::bigint, pg_total_relation_size($1::regclass) FROM pg_class WHERE oid = $1::regclass`, a.Table).Scan(&relTuples, &totalBytes); e != nil {
@@ -226,14 +226,14 @@ func recordIndexVerdictTool(_ context.Context, args json.RawMessage) (string, er
 
 // scanRows runs a query with one bind arg and returns its rows as []map, column
 // names from the result description (best-effort; a query error yields nil).
-func scanRows(ctx context.Context, tx pgx.Tx, sql string, arg any) []map[string]any {
+func scanRows(ctx context.Context, tx *pggo.Tx, sql string, arg any) []map[string]any {
 	rows, err := tx.Query(ctx, sql, arg)
 	if err != nil {
 		return nil
 	}
 	defer rows.Close()
 	var out []map[string]any
-	fields := rows.FieldDescriptions()
+	fields := rows.Columns()
 	for rows.Next() {
 		vals, err := rows.Values()
 		if err != nil {
@@ -241,7 +241,7 @@ func scanRows(ctx context.Context, tx pgx.Tx, sql string, arg any) []map[string]
 		}
 		m := make(map[string]any, len(fields))
 		for i, fd := range fields {
-			m[string(fd.Name)] = vals[i]
+			m[fd.Name] = vals[i]
 		}
 		out = append(out, m)
 	}

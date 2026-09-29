@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"path"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/pgrundev/pggo"
 )
 
-// RowQuerier is the one pgx capability the SQL source needs (satisfied by
-// *pgxpool.Pool and *pgx.Conn).
+// RowQuerier is the one driver capability the SQL source needs (satisfied by
+// *pggo.Pool and *pggo.Conn).
 type RowQuerier interface {
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	QueryRow(ctx context.Context, sql string, args ...any) *pggo.Row
 }
 
 // ErrNoCollector means the server writes no logfile pgbot can address —

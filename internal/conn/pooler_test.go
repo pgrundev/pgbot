@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/pgrundev/pggo"
 )
 
 func TestIsKnownPoolerEndpoint(t *testing.T) {
@@ -21,9 +21,9 @@ func TestIsKnownPoolerEndpoint(t *testing.T) {
 		{"127.0.0.1", 6432, false}, // generic PgBouncer on a nonstandard port — undetectable by signature
 	}
 	for _, c := range cases {
-		cc := &pgx.ConnConfig{}
+		cc := &pggo.Config{}
 		cc.Host = c.host
-		cc.Port = c.port
+		cc.Port = int(c.port)
 		if got := isKnownPoolerEndpoint(cc); got != c.want {
 			t.Errorf("isKnownPoolerEndpoint(%s:%d) = %v, want %v", c.host, c.port, got, c.want)
 		}
@@ -31,8 +31,8 @@ func TestIsKnownPoolerEndpoint(t *testing.T) {
 }
 
 func TestPoolerHint(t *testing.T) {
-	mk := func(host string, port uint16) *pgx.ConnConfig {
-		cc := &pgx.ConnConfig{}
+	mk := func(host string, port int) *pggo.Config {
+		cc := &pggo.Config{}
 		cc.Host, cc.Port = host, port
 		return cc
 	}

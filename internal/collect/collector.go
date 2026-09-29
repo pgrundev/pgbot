@@ -8,9 +8,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/pgrundev/pgbot/internal/conn"
 	"github.com/pgrundev/pgbot/internal/model"
+	"github.com/pgrundev/pggo"
 )
 
 // Kind decides how the runner samples a collector.
@@ -156,12 +156,12 @@ func newContext(caps conn.Capabilities, tB time.Time, dt time.Duration) *model.C
 
 func queryOne[T any](ctx context.Context, t *conn.Target, sql string, args ...any) (T, error) {
 	var out T
-	err := t.ReadOnlyTx(ctx, func(tx pgx.Tx) error {
+	err := t.ReadOnlyTx(ctx, func(tx *pggo.Tx) error {
 		rows, err := tx.Query(ctx, sql, args...)
 		if err != nil {
 			return err
 		}
-		out, err = pgx.CollectExactlyOneRow(rows, pgx.RowToStructByNameLax[T])
+		out, err = pggo.CollectOneStruct[T](rows)
 		return err
 	})
 	return out, err
@@ -175,7 +175,7 @@ func queryMany[T any](ctx context.Context, t *conn.Target, sql string, args ...a
 // (SET LOCAL … — they end with the transaction, so the session's pins stay).
 func queryManyLocal[T any](ctx context.Context, t *conn.Target, setLocal []string, sql string, args ...any) ([]T, error) {
 	var out []T
-	err := t.ReadOnlyTx(ctx, func(tx pgx.Tx) error {
+	err := t.ReadOnlyTx(ctx, func(tx *pggo.Tx) error {
 		for _, s := range setLocal {
 			if _, err := tx.Exec(ctx, s); err != nil {
 				return err
@@ -185,7 +185,7 @@ func queryManyLocal[T any](ctx context.Context, t *conn.Target, setLocal []strin
 		if err != nil {
 			return err
 		}
-		out, err = pgx.CollectRows(rows, pgx.RowToStructByNameLax[T])
+		out, err = pggo.CollectStructs[T](rows)
 		return err
 	})
 	return out, err
@@ -193,7 +193,7 @@ func queryManyLocal[T any](ctx context.Context, t *conn.Target, setLocal []strin
 
 func scalar[T any](ctx context.Context, t *conn.Target, sql string, args ...any) (T, error) {
 	var out T
-	err := t.ReadOnlyTx(ctx, func(tx pgx.Tx) error {
+	err := t.ReadOnlyTx(ctx, func(tx *pggo.Tx) error {
 		return tx.QueryRow(ctx, sql, args...).Scan(&out)
 	})
 	return out, err

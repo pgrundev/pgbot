@@ -66,7 +66,7 @@ func TestPgServiceFallback(t *testing.T) {
 	}
 
 	// A bare $PGSERVICE resolves a connection when nothing else is set —
-	// pgx's ParseConfig reads PGSERVICE(FILE) itself once it sees "service=...".
+	// pggo.ParseConfig reads PGSERVICE(FILE) itself once it sees "service=...".
 	t.Setenv("DATABASE_URL", "")
 	t.Setenv("PGBOT_DATABASE_URL", "")
 	if dsn, err := dsnFromArgs(json.RawMessage(`{}`)); err != nil || dsn != "service=mydb" {

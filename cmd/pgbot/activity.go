@@ -8,9 +8,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/pgrundev/pgbot/internal/conn"
 	"github.com/pgrundev/pgbot/internal/render"
+	"github.com/pgrundev/pggo"
 	"github.com/spf13/cobra"
 )
 
@@ -78,7 +78,7 @@ wait on, and the (scrubbed) SQL. Plain idle sessions are summarized, not listed
 			if err != nil {
 				return err
 			}
-			got, err := pgx.CollectRows(rows, pgx.RowToStructByNameLax[activityRow])
+			got, err := pggo.CollectStructs[activityRow](rows)
 			if err != nil {
 				return err
 			}

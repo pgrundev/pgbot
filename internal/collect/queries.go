@@ -65,7 +65,7 @@ func (queriesCollector) Sample(ctx context.Context, t *conn.Target, caps conn.Ca
 	// (caps.Pgss — discovered from pg_extension at connect). Supabase installs the
 	// extension in "extensions", off a read-only role's search_path; the bare
 	// name there raised 42P01 while the capability list still said "present"
-	// (issue #10). The names are the fixed allowlisted objects, quoted by pgx.
+	// (issue #10). The names are the fixed allowlisted objects, quoted by pggo.QuoteIdentifier.
 	rows, err := queryManyLocal[queryRow](ctx, t, []string{"SET LOCAL work_mem = '64MB'"},
 		fmt.Sprintf(sqlQueries, caps.StatStatementsTotalCol(), caps.Pgss("pg_stat_statements")))
 	if err != nil {

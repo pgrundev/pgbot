@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/pgrundev/pgbot/internal/collect"
 	"github.com/pgrundev/pgbot/internal/conn"
 	"github.com/pgrundev/pgbot/internal/findings"
 	"github.com/pgrundev/pgbot/internal/model"
+	"github.com/pgrundev/pggo"
 )
 
 // Issue #11: a CREATE INDEX CONCURRENTLY that fails during the build (here: a
@@ -29,13 +29,13 @@ func TestIntegration_invalidIndexDebrisIsNotCritical(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	admin, err := pgx.Connect(ctx, su)
+	admin, err := pggo.Connect(ctx, su)
 	if err != nil {
 		t.Fatalf("admin connect: %v", err)
 	}
-	t.Cleanup(func() { admin.Close(context.Background()) })
+	t.Cleanup(func() { admin.Close() })
 
-	if _, err := admin.Exec(ctx, `
+	if _, err := admin.SimpleQuery(ctx, `
 		DROP TABLE IF EXISTS public.pgbot_it_dup;
 		CREATE TABLE public.pgbot_it_dup (id serial primary key, v int);
 		INSERT INTO public.pgbot_it_dup (v) SELECT g % 100 FROM generate_series(1, 20000) g`); err != nil {

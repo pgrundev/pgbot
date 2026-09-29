@@ -3,7 +3,7 @@ package conn
 import (
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/pgrundev/pggo"
 )
 
 // Capabilities is built once at connect from server_version_num + a probe of
@@ -39,7 +39,7 @@ func (c Capabilities) ExtensionSchema(ext string) string { return c.ExtensionSch
 // allowlisted object (view / function / table) belonging to an extension —
 // e.g. "extensions"."pg_stat_statements" — so a read works whatever the
 // session's search_path is. The schema comes from the catalog, never user input,
-// but it is quoted anyway (pgx.Identifier) so an unusual namespace name can't
+// but it is quoted anyway (pggo.QuoteIdentifier) so an unusual namespace name can't
 // break the statement. When the schema is unknown it degrades to the bare name,
 // i.e. exactly the pre-discovery behaviour.
 func (c Capabilities) ExtObject(ext, object string) string {
@@ -47,7 +47,7 @@ func (c Capabilities) ExtObject(ext, object string) string {
 	if schema == "" {
 		return object
 	}
-	return pgx.Identifier{schema, object}.Sanitize()
+	return pggo.QuoteIdentifier(schema, object)
 }
 
 // Pgss is ExtObject for pg_stat_statements' objects: the view, the

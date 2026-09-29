@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/pgrundev/pgbot/internal/collect"
 	"github.com/pgrundev/pgbot/internal/conn"
 	"github.com/pgrundev/pgbot/internal/findings"
 	"github.com/pgrundev/pgbot/internal/model"
+	"github.com/pgrundev/pggo"
 )
 
 // A collation version mismatch can't be produced by upgrading glibc inside a
@@ -27,11 +27,11 @@ func TestIntegration_collationVersionMismatch(t *testing.T) {
 	ro := dsn(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	admin, err := pgx.Connect(ctx, su)
+	admin, err := pggo.Connect(ctx, su)
 	if err != nil {
 		t.Fatalf("admin connect: %v", err)
 	}
-	t.Cleanup(func() { admin.Close(context.Background()) })
+	t.Cleanup(func() { admin.Close() })
 
 	var vnum int
 	if err := admin.QueryRow(ctx, `SELECT current_setting('server_version_num')::int`).Scan(&vnum); err != nil {
@@ -49,7 +49,7 @@ func TestIntegration_collationVersionMismatch(t *testing.T) {
 	if recorded == nil {
 		t.Skip("this database's collation records no version (C/POSIX) — nothing can drift")
 	}
-	refresh := `ALTER DATABASE ` + pgx.Identifier{db}.Sanitize() + ` REFRESH COLLATION VERSION`
+	refresh := `ALTER DATABASE ` + pggo.QuoteIdentifier(db) + ` REFRESH COLLATION VERSION`
 	if _, err := admin.Exec(ctx, `UPDATE pg_database SET datcollversion = '0.0-pgbot-test' WHERE datname = current_database()`); err != nil {
 		t.Fatalf("forge a stale datcollversion: %v", err)
 	}

@@ -6,10 +6,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/pgrundev/pgbot/internal/conn"
 	"github.com/pgrundev/pgbot/internal/model"
+	"github.com/pgrundev/pggo"
 )
 
 // LockEdge is one blocked→holder observation from one slow-plane snapshot:
@@ -312,7 +311,7 @@ func RunWaitStudy(ctx context.Context, t *conn.Target, caps conn.Capabilities, o
 				snapFails++
 				return
 			}
-			got, err := pgx.CollectRows(rows, pgx.RowToStructByNameLax[lockEdgeRow])
+			got, err := pggo.CollectStructs[lockEdgeRow](rows)
 			if err != nil {
 				snapFails++
 				return

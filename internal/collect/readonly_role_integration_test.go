@@ -10,11 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/pgrundev/pgbot/internal/collect"
 	"github.com/pgrundev/pgbot/internal/conn"
 	"github.com/pgrundev/pgbot/internal/model"
+	"github.com/pgrundev/pggo"
 )
 
 // The read-only guarantee's real boundary is the role: a pg_monitor role with no
@@ -30,19 +29,19 @@ func TestIntegration_readOnlyRole_runsFullPipelineAndCannotWrite(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	cfg, err := pgx.ParseConfig(su)
+	cfg, err := pggo.ParseConfig(su)
 	if err != nil {
 		t.Fatalf("parse superuser dsn: %v", err)
 	}
 	const roUser, roPass = "pgbot_ro_test", "ro_test_pw"
 
-	admin, err := pgx.Connect(ctx, su)
+	admin, err := pggo.Connect(ctx, su)
 	if err != nil {
 		t.Fatalf("admin connect: %v", err)
 	}
-	defer admin.Close(ctx)
+	defer admin.Close()
 
-	db := pgx.Identifier{cfg.Database}.Sanitize()
+	db := pggo.QuoteIdentifier(cfg.Database)
 	// Idempotent (re)provision: least privilege — pg_monitor + CONNECT, nothing more.
 	_, _ = admin.Exec(ctx, `DROP OWNED BY `+roUser)
 	_, _ = admin.Exec(ctx, `DROP ROLE IF EXISTS `+roUser)
@@ -90,16 +89,16 @@ func TestIntegration_readOnlyRole_runsFullPipelineAndCannotWrite(t *testing.T) {
 
 	// 2. The role itself must be unable to write — a raw connection with NO pgbot
 	// read-only pinning still cannot INSERT, because the grant simply isn't there.
-	raw, err := pgx.Connect(ctx, roDSN)
+	raw, err := pggo.Connect(ctx, roDSN)
 	if err != nil {
 		t.Fatalf("raw connect as %s: %v", roUser, err)
 	}
-	defer raw.Close(ctx)
+	defer raw.Close()
 	_, werr := raw.Exec(ctx, `INSERT INTO ro_probe VALUES (1)`)
 	if werr == nil {
 		t.Fatal("SAFETY: a pg_monitor role was able to INSERT — it has write access it must not have")
 	}
-	var pgErr *pgconn.PgError
+	var pgErr *pggo.PgError
 	if !strings.Contains(werr.Error(), "permission denied") &&
 		!(errors.As(werr, &pgErr) && pgErr.Code == "42501") {
 		t.Errorf("write should be denied for insufficient privilege (42501), got: %v", werr)

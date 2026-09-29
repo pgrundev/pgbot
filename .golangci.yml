@@ -11,7 +11,7 @@ linters:
         - (io.Closer).Close
         - (*database/sql.Rows).Close
         - (*database/sql.Stmt).Close
-        - (*github.com/jackc/pgx/v5.Conn).Close
+        - (*github.com/pgrundev/pggo.Conn).Close
         - (*github.com/pgrundev/pgbot/internal/store.Store).Close
         - fmt.Fprint
         - fmt.Fprintf

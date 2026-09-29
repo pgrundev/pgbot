@@ -7,7 +7,7 @@ import (
 	"math/big"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/pgrundev/pggo"
 )
 
 // PoolerInfo records whether the connection routes through a transaction pooler
@@ -18,7 +18,7 @@ import (
 // zeroed rates that LOOK like a healthy run. We must detect this, not guess it.
 type PoolerInfo struct {
 	Detected       bool
-	SimpleProtocol bool   // prepared statements failed; use the simple protocol
+	SimpleProtocol bool   // named prepared statements failed (a transaction-pooler signal)
 	Hint           string // provider-specific fix, for the error message
 }
 
@@ -33,23 +33,24 @@ type PoolerInfo struct {
 //     pooler the two statements may land on different backends, so it doesn't.
 //
 // Host/port heuristics are only used to make the error message friendlier.
-func detectPooler(ctx context.Context, c *pgx.Conn, cc *pgx.ConnConfig) PoolerInfo {
+func detectPooler(ctx context.Context, c *pggo.Conn, cc *pggo.Config) PoolerInfo {
 	info := PoolerInfo{Hint: poolerHint(cc)}
 
 	// (1) prepared-statement probe
 	psName := fmt.Sprintf("pgbot_ps_%d", nonce())
-	if _, err := c.Prepare(ctx, psName, "SELECT 1"); err != nil {
+	if err := c.Prepare(ctx, psName, "SELECT 1"); err != nil {
 		info.SimpleProtocol = true
 	} else {
 		_ = c.Deallocate(ctx, psName)
 	}
 
-	// (2) session-persistence probe, forced through the simple protocol so a
-	// prepared-statement failure doesn't masquerade as non-persistence.
+	// (2) session-persistence probe. pgGo sends it as an unnamed statement in one
+	// Sync, which works even where named prepared statements fail, so a
+	// prepared-statement failure can't masquerade as non-persistence.
 	want := fmt.Sprintf("pgbot_probe_%d", nonce())
 	if _, err := c.Exec(ctx, "SET application_name = '"+want+"'"); err == nil {
 		var got string
-		err := c.QueryRow(ctx, "SELECT current_setting('application_name')", pgx.QueryExecModeSimpleProtocol).Scan(&got)
+		err := c.QueryRow(ctx, "SELECT current_setting('application_name')").Scan(&got)
 		if err == nil && got != want {
 			info.Detected = true
 		}
@@ -87,7 +88,7 @@ func detectPooler(ctx context.Context, c *pgx.Conn, cc *pgx.ConnConfig) PoolerIn
 // LOCAL inside an explicit transaction is forwarded verbatim), and shard 0
 // exists in every deployment. pgdog.sharding_key must never be used here — on
 // some configs it errors and poisons the session for every later statement.
-func detectPgDog(ctx context.Context, c *pgx.Conn) bool {
+func detectPgDog(ctx context.Context, c *pggo.Conn) bool {
 	want := fmt.Sprintf("pgbot_%d", nonce())
 	if _, err := c.Exec(ctx, "SET pgbot.probe = '"+want+"'"); err != nil {
 		return false
@@ -98,8 +99,7 @@ func detectPgDog(ctx context.Context, c *pgx.Conn) bool {
 	}
 	var control, shard *string
 	err := c.QueryRow(ctx,
-		"SELECT current_setting('pgbot.probe', true), current_setting('pgdog.shard', true)",
-		pgx.QueryExecModeSimpleProtocol).Scan(&control, &shard)
+		"SELECT current_setting('pgbot.probe', true), current_setting('pgdog.shard', true)").Scan(&control, &shard)
 	// Clean up with SET … TO DEFAULT, never RESET: SET of a dotted name is
 	// accepted even by a backend that never saw the parameter, while RESET
 	// errors there — and pgbot must not book server errors it would then report.
@@ -121,11 +121,11 @@ func pgdogVerdict(control, shard *string, want string) bool {
 	return shard == nil || *shard != "0"
 }
 
-func isKnownPoolerEndpoint(cc *pgx.ConnConfig) bool {
+func isKnownPoolerEndpoint(cc *pggo.Config) bool {
 	return strings.Contains(strings.ToLower(cc.Host), "-pooler") || cc.Port == 6543
 }
 
-func poolerHint(cc *pgx.ConnConfig) string {
+func poolerHint(cc *pggo.Config) string {
 	host := strings.ToLower(cc.Host)
 	switch {
 	// "-pooler" alone is not Neon (issue #22): PgDog and self-hosted poolers

@@ -8,6 +8,26 @@ separately by `model.SchemaVersion` (currently 1.3.0).
 ## [Unreleased]
 
 ### Changed
+- **PostgreSQL driver: pgx → [pgGo](https://github.com/pgrundev/pggo).** pgbot
+  now talks to PostgreSQL through pgGo, a dependency-free wire-protocol client
+  (standard library only). Output is unchanged apart from pgbot's own
+  footprint in the counters it samples (below) — verified by running the pgx
+  and pgGo builds side by side against PostgreSQL 16–19, a streaming standby,
+  PgBouncer (transaction mode) and PgDog. Read-only
+  guarantees are unchanged: the same session pins and `READ ONLY` transactions,
+  enforced by PostgreSQL. Effects you may notice:
+  - The binary is ~5 MB smaller (4 fewer modules: pgx, pgpassfile,
+    pgservicefile, puddle); runs need fewer round trips (`BEGIN` is pipelined
+    with each collector's first query).
+  - pgbot's own traffic is less visible in `pg_stat_database` during the
+    sample window, so throughput on a near-idle database is reported closer to
+    the truth (pgx builds counted ~15–20 tps of pgbot's own commits; with a
+    rate-limited 200 tps workload pgx reported ~220, pgGo ~200). On an idle
+    database, cache hit and rollbacks now show `—` (nothing measured) where the
+    pgx build graded pgbot's own reads.
+  - Behind a transaction pooler no protocol fallback is needed any more: pgGo
+    only uses unnamed statements, parsed and executed within one sync. The
+    prepared-statement probe still runs and still counts as a pooler signal.
 - **Gauge strip in the default `inspect` view.** Four vital signs sit right
   under the header — cache hit, lock wait (naming the culprit query when
   sessions are blocked), rollbacks, and idle index bytes as a share of the
@@ -50,9 +70,9 @@ separately by `model.SchemaVersion` (currently 1.3.0).
   is passed and neither `$DATABASE_URL` nor `$PGBOT_DATABASE_URL` is set,
   pgbot now checks `$PGSERVICE` too, so a
   [connection service file](https://www.postgresql.org/docs/current/libpq-pgservice.html)
-  alone is enough to pick a database. pgx's `ParseConfig` already reads
+  alone is enough to pick a database. The driver's `ParseConfig` already reads
   `PGSERVICEFILE` (or the libpq default path); this just stops pgbot from
-  erroring out before pgx gets a chance to.
+  erroring out before the driver gets a chance to.
 - **AWS Bedrock Mantle as an `explain` / `ask` provider** (#35, contributed by
   @edwardsb). `PGBOT_AI_PROVIDER=bedrock` (alias `mantle`) routes `openai.*`
   models through the Responses API and `anthropic.*` models through the

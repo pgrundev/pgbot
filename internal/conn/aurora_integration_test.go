@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgrundev/pggo"
 )
 
 // TestIntegration_auroraInstances is the opt-in end-to-end check for
@@ -36,15 +36,15 @@ func TestIntegration_auroraInstances(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discover: %v", err)
 	}
-	cfg, err := pgxpool.ParseConfig(dsn)
+	cfg, err := pggo.ParseConfig(dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
-	endpoint, err := CanonicalRDSHost(cfg.ConnConfig.Host)
+	endpoint, err := CanonicalRDSHost(cfg.Host)
 	if err != nil {
 		t.Fatalf("endpoint: %v", err)
 	}
-	t.Logf("entry endpoint %s → %s; %d instance(s)", cfg.ConnConfig.Host, endpoint, len(instances))
+	t.Logf("entry endpoint %s → %s; %d instance(s)", cfg.Host, endpoint, len(instances))
 
 	for _, inst := range instances {
 		host, err := AuroraInstanceHost(endpoint, inst.ID)

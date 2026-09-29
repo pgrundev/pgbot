@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/pgrundev/pgbot/internal/conn"
 	"github.com/pgrundev/pgbot/internal/pglog"
 	"github.com/pgrundev/pgbot/internal/render"
+	"github.com/pgrundev/pggo"
 	"github.com/spf13/cobra"
 )
 
@@ -95,7 +95,7 @@ func runLogs(cmd *cobra.Command, args []string, f logsFlags) error {
 	// register on first use, and a long --live recycles connections (5m
 	// lifetime), minting new PIDs the whole while.
 	connUser := ""
-	if cfg, cerr := pgconn.ParseConfig(connString); cerr == nil {
+	if cfg, cerr := pggo.ParseConfig(connString); cerr == nil {
 		connUser = cfg.User
 	}
 	keep := func(e pglog.Entry) bool {
@@ -159,10 +159,10 @@ func runLogs(cmd *cobra.Command, args []string, f logsFlags) error {
 // logsErr turns the two expected failures into their fixes: no collector, and
 // the one missing GRANT.
 func logsErr(err error, connString string) error {
-	var pgErr *pgconn.PgError
+	var pgErr *pggo.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "42501" { // insufficient_privilege
 		user := "your_pgbot_role"
-		if cfg, cerr := pgconn.ParseConfig(connString); cerr == nil && cfg.User != "" {
+		if cfg, cerr := pggo.ParseConfig(connString); cerr == nil && cfg.User != "" {
 			user = cfg.User
 		}
 		return fmt.Errorf("reading the server log needs one grant beyond pg_monitor — run as an admin:\n\n  %s\n\n(%s)",
