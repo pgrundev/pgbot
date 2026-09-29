@@ -40,6 +40,7 @@ var schemaCollectors = map[string]bool{
 	"indexes":   true, // index_invalid, redundant_indexes, fk_unindexed
 	"sequences": true, // int4_identity_column
 	"tables":    true, // autovacuum_disabled_on_table (reloptions)
+	"replident": true, // replica_identity_missing (pg_publication + pg_class)
 }
 
 func (o Options) interval() time.Duration {
@@ -106,6 +107,7 @@ var registry = []Collector{
 	checksumsCollector{},
 	collationCollector{},
 	standbyCollector{},
+	replidentCollector{},
 }
 
 func nowUTC() time.Time { return time.Now().UTC() }

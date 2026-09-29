@@ -34,6 +34,11 @@ func TestCatalog_matchesEmitted(t *testing.T) {
 				{Kind: "database", Name: "app", Provider: "libc", Recorded: "2.31", Actual: "2.36"},
 			}},
 		},
+		"replica_identity_missing": {
+			ReplicaIdentity: &model.ReplicaIdentity{Unidentifiable: []model.PublishedTable{
+				{Schema: "public", Name: "events", Identity: "d", Publications: "app_pub"},
+			}},
+		},
 		"pgaudit_silent": {
 			Server:   model.ServerInfo{Extensions: []string{"pgaudit"}},
 			Settings: &model.Settings{Params: map[string]string{"pgaudit.log": "none"}},

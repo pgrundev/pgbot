@@ -126,8 +126,8 @@ var knownIDs = map[string]bool{
 	"sync_rep_degraded": true, "replica_lag_time": true, "recovery_conflicts": true,
 	"replica_disconnected": true, "checksum_failures": true,
 	"ignore_checksum_failure_on": true, "checksums_disabled": true,
-	"collation_version_mismatch": true,
-	"archiving_failing":          true, "archiving_stalled": true, "archiving_disabled": true,
+	"collation_version_mismatch": true, "replica_identity_missing": true,
+	"archiving_failing": true, "archiving_stalled": true, "archiving_disabled": true,
 	"replication_slot_inactive": true, "subscription_worker_down": true,
 	"query_slowdown": true, "pgss_entries_evicted": true, "work_mem_low": true,
 	"checkpoints_forced": true, "connections_overprovisioned": true, "fsync_off": true,
@@ -196,6 +196,7 @@ func ComputeWithTunables(c *model.Context, tun Tunables) []model.Finding {
 	walArchiving(c, add)
 	checksumFindings(c, add)
 	collationVersionMismatch(c, add)
+	replicaIdentityMissing(c, add)
 	failoverReadiness(c, add, tun)
 	replicationSlotRisk(c, add)
 	subscriptionDown(c, add)
@@ -1636,6 +1637,44 @@ func collationVersionMismatch(c *model.Context, add func(model.Finding)) {
 			"A version change does not prove the sort order changed for your locale, but the only way to know is to reindex; treat the indexes as suspect until then.",
 		},
 		Impact:     impact(model.DimRisk, score, fmt.Sprintf("%d collation version mismatch(es)", n), "datcollversion/collversion ≠ the library's actual version"),
+		Confidence: 1.0,
+	})
+}
+
+// replicaIdentityMissing flags tables published for UPDATE/DELETE with no usable
+// replica identity. Postgres accepts the publication and the schema, then rejects
+// the write at runtime, so this is a live breakage a migration can introduce.
+func replicaIdentityMissing(c *model.Context, add func(model.Finding)) {
+	if c.ReplicaIdentity == nil || len(c.ReplicaIdentity.Unidentifiable) == 0 {
+		return
+	}
+	why := map[string]string{
+		"d": "replica identity default and no primary key",
+		"n": "replica identity nothing",
+		"i": "replica identity index, but the nominated index is missing or invalid",
+	}
+	var ev, objs []string
+	for _, t := range c.ReplicaIdentity.Unidentifiable {
+		rel := t.Schema + "." + t.Name
+		reason := why[t.Identity]
+		if reason == "" {
+			reason = "replica identity " + t.Identity
+		}
+		objs = append(objs, rel)
+		ev = append(ev, fmt.Sprintf("%s — %s (published by %s)", rel, reason, t.Publications))
+	}
+	n := len(objs)
+	add(model.Finding{
+		ID: "replica_identity_missing", Severity: model.SeverityCritical, Objects: objs,
+		Title:       fmt.Sprintf("%d published table(s) reject UPDATE and DELETE — no replica identity", n),
+		Detail:      "A table published for UPDATE or DELETE needs a replica identity so the subscriber can find the row to change. Without one Postgres rejects the write itself: \"cannot update table … because it does not have a replica identity and publishes updates\". Reads and INSERTs keep working, so this usually surfaces as the first UPDATE after a migration, not at deploy time.",
+		Evidence:    ev,
+		Remediation: "Give each table a primary key, or point the identity at an existing UNIQUE index on NOT NULL columns with ALTER TABLE … REPLICA IDENTITY USING INDEX <index>. Where neither fits, REPLICA IDENTITY FULL works, or drop the table from the publication.",
+		Caveats: []string{
+			"REPLICA IDENTITY FULL puts every column in the WAL record and makes the subscriber match rows without an index — correct, but costly on a large or busy table.",
+			"A partitioned table published with publish_via_partition_root replicates as the root; pgbot reports the relation the catalog names, which may be a partition.",
+		},
+		Impact:     impact(model.DimRisk, 92, fmt.Sprintf("%d published table(s) cannot be updated", n), "relreplident with no usable identity on a table in an UPDATE/DELETE publication"),
 		Confidence: 1.0,
 	})
 }

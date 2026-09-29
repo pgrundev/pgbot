@@ -17,4 +17,7 @@ package model
 // 1.4.0: additive only — ServerInfo gains instance/instance_role, naming the
 // cluster member a report came from under --all-instances. Both are omitted on a
 // single-instance run, so a 1.3.0 consumer still parses 1.4.0 output.
-const SchemaVersion = "1.4.0"
+//
+// 1.5.0: additive only — Context gains the `replica_identity` section (published
+// tables with no usable replica identity). A 1.4.0 consumer still parses it.
+const SchemaVersion = "1.5.0"

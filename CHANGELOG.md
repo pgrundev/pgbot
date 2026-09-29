@@ -3,7 +3,7 @@
 All notable changes to pgbot are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims for
 [Semantic Versioning](https://semver.org/). The `--json` contract is versioned
-separately by `model.SchemaVersion` (currently 1.3.0).
+separately by `model.SchemaVersion` (currently 1.5.0).
 
 ## [Unreleased]
 
@@ -21,6 +21,17 @@ separately by `model.SchemaVersion` (currently 1.3.0).
   `pgbot ask "why is it slow?"`.
 
 ### Added
+- **`replica_identity_missing` finding.** A table published for `UPDATE` or
+  `DELETE` with no usable replica identity — `DEFAULT` and no primary key,
+  `NOTHING`, or `USING INDEX` whose index is gone — makes Postgres reject the
+  write itself (`cannot update table … because it does not have a replica
+  identity and publishes updates`). Reads and INSERTs keep working, so the
+  failure lands on the first UPDATE after a migration rather than at deploy
+  time. Read from `pg_publication` and `pg_class`, so it is `schema` scope and
+  runs under `--profile=schema` / `pgbot lint` on an empty CI database.
+  Insert-only publications need no identity and are not reported. New
+  `replica_identity` section in `--json`; `SchemaVersion` → **1.5.0** (additive;
+  a 1.4.0 consumer parses it unchanged).
 - **`collation_version_mismatch` finding** (PG15+). The collation library
   (libc or ICU) that defines text sort order changed version under the data —
   an OS upgrade, a new base image, a restore onto a different host — so every

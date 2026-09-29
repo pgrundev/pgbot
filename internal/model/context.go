@@ -57,7 +57,9 @@ type Context struct {
 	Checksums   *Checksums     `json:"checksums,omitempty"` // data-checksum failures cluster-wide (A16)
 	Standby     *StandbyStatus `json:"standby,omitempty"`   // standby-side recovery conflicts (A17)
 	Collation   *Collation     `json:"collation,omitempty"` // collation version drift (PG15+)
-	Deltas      *Deltas        `json:"deltas,omitempty"`    // vs baseline; nil on first run
+	// ReplicaIdentity is published tables that can't be updated (no usable identity).
+	ReplicaIdentity *ReplicaIdentity `json:"replica_identity,omitempty"`
+	Deltas          *Deltas          `json:"deltas,omitempty"` // vs baseline; nil on first run
 	// Set (with Deltas nil) when a stats reset / restart between runs makes any
 	// comparison fiction — e.g. serverless scale-to-zero. See T2.
 	DeltaSuppressedReason string       `json:"delta_suppressed_reason,omitempty"`
@@ -478,6 +480,20 @@ type CollationMismatch struct {
 	Provider string `json:"provider"` // libc | icu | builtin
 	Recorded string `json:"recorded_version"`
 	Actual   string `json:"actual_version"` // "" when the library reports none
+}
+
+// ReplicaIdentity lists tables published for UPDATE/DELETE whose replica identity
+// can't identify a row, so those writes error. Empty = healthy.
+type ReplicaIdentity struct {
+	Section
+	Unidentifiable []PublishedTable `json:"unidentifiable,omitempty"`
+}
+
+type PublishedTable struct {
+	Schema       string `json:"schema"`
+	Name         string `json:"table"`
+	Identity     string `json:"identity"`     // relreplident: d | n | i | f
+	Publications string `json:"publications"` // comma-separated names
 }
 
 // Archiver is WAL archiving health from pg_stat_archiver. HasArchiveCommand is
