@@ -21,19 +21,19 @@ func RenderHTML(s Schema) string {
 	)
 
 	tables := append([]Table(nil), s.Tables...)
-	sort.Slice(tables, func(i, j int) bool { return tables[i].Name < tables[j].Name })
+	sort.Slice(tables, func(i, j int) bool { return lessIdentity(identityOf(tables[i]), identityOf(tables[j])) })
+	edges := drawableEdges(resolveEdges(tables, s.Edges))
 
 	// Same layered layout as --layout row: parents left, children right.
-	depth := map[string]int{}
-	known := map[string]bool{}
+	depth := map[tableIdentity]int{}
 	for _, t := range tables {
-		depth[t.Name], known[t.Name] = 0, true
+		depth[identityOf(t)] = 0
 	}
 	for range tables {
 		changed := false
-		for _, e := range s.Edges {
-			if known[e.FromTable] && known[e.ToTable] && depth[e.FromTable] < depth[e.ToTable]+1 {
-				depth[e.FromTable] = depth[e.ToTable] + 1
+		for _, e := range edges {
+			if depth[e.From] < depth[e.To]+1 {
+				depth[e.From] = depth[e.To] + 1
 				changed = true
 			}
 		}
@@ -50,18 +50,18 @@ func RenderHTML(s Schema) string {
 		x, y, w, h float64
 		fkY        map[string]float64 // FK column name → row center y
 	}
-	boxes := map[string]*box{}
+	boxes := map[tableIdentity]*box{}
 	colX := 0.0
 	for d := 0; d <= maxDepth; d++ {
 		colW, y := 0.0, 0.0
 		var col []*Table
 		for i := range tables {
-			if depth[tables[i].Name] == d {
+			if depth[identityOf(tables[i])] == d {
 				col = append(col, &tables[i])
 			}
 		}
 		for _, t := range col {
-			w := float64(len(t.Schema+"."+t.Name))*charW + 2*padX
+			w := float64(len(qualifiedTableName(identityOf(*t))))*charW + 2*padX
 			for _, c := range t.Columns {
 				lw := float64(len(c.Name)+2+len(c.Type)+8)*charW + 2*padX
 				if c.FKTarget != "" {
@@ -79,16 +79,14 @@ func RenderHTML(s Schema) string {
 			}
 			b := &box{x: colX, y: y, w: w, h: titleH + float64(len(t.Columns))*rowH + ih + padY, fkY: map[string]float64{}}
 			for i, c := range t.Columns {
-				if c.FKTarget != "" {
-					b.fkY[c.Name] = y + titleH + float64(i)*rowH + rowH/2
-				}
+				b.fkY[c.Name] = y + titleH + float64(i)*rowH + rowH/2
 			}
-			boxes[t.Name] = b
+			boxes[identityOf(*t)] = b
 			colW = maxFloat(colW, w)
 			y += b.h + boxGap
 		}
 		for _, t := range col {
-			boxes[t.Name].w = colW
+			boxes[identityOf(*t)].w = colW
 		}
 		colX += colW + colGap
 	}
@@ -102,19 +100,9 @@ func RenderHTML(s Schema) string {
 	var svg strings.Builder
 	esc := html.EscapeString
 	// Edges first, under the boxes.
-	edges := append([]Edge(nil), s.Edges...)
-	sort.Slice(edges, func(i, j int) bool {
-		if edges[i].ToTable != edges[j].ToTable {
-			return edges[i].ToTable < edges[j].ToTable
-		}
-		return edges[i].FromTable < edges[j].FromTable
-	})
 	for _, e := range edges {
-		child, parent := boxes[e.FromTable], boxes[e.ToTable]
-		if child == nil || parent == nil {
-			continue
-		}
-		y1, ok := child.fkY[e.FromColumn]
+		child, parent := boxes[e.From], boxes[e.To]
+		y1, ok := child.fkY[e.Edge.FromColumn]
 		if !ok {
 			continue
 		}
@@ -126,9 +114,9 @@ func RenderHTML(s Schema) string {
 	}
 	for i := range tables {
 		t := &tables[i]
-		b := boxes[t.Name]
+		b := boxes[identityOf(*t)]
 		fmt.Fprintf(&svg, `<g><rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" rx="6" class="tbl"/>`+"\n", b.x, b.y, b.w, b.h)
-		fmt.Fprintf(&svg, `<text x="%.1f" y="%.1f" class="title">%s</text>`+"\n", b.x+padX, b.y+20, esc(t.Schema+"."+t.Name))
+		fmt.Fprintf(&svg, `<text x="%.1f" y="%.1f" class="title">%s</text>`+"\n", b.x+padX, b.y+20, esc(qualifiedTableName(identityOf(*t))))
 		fmt.Fprintf(&svg, `<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" class="rule"/>`+"\n", b.x, b.y+titleH-2, b.x+b.w, b.y+titleH-2)
 		for ci, c := range t.Columns {
 			y := b.y + titleH + float64(ci)*rowH + 15
