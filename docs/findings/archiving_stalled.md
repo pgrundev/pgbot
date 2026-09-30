@@ -16,26 +16,35 @@ related: [archiving_failing]
 
 ## What pgbot observed
 
-`archive_mode` is `on` (or `always`), WAL is actively being generated (pgbot's own WAL
-sampling shows `BytesPerSec > 0`), and yet nothing has been archived recently:
-`now() - last_archived_time` exceeds the stall threshold, which is
+`archive_mode` is `on` (or `always`), pgbot's current WAL sample has
+`BytesPerSec > 0`, and `Context.CollectedAt - last_archived_time` exceeds the stall
+threshold, which is
 **`max(archive_timeout × 3, 1 hour)`** (`archiveStallFloorS = 3600`). Crucially this is
 the case where archiving is **not reporting a failure** — `last_failed_time` is not
 newer than `last_archived_time`, so [archiving_failing](archiving_failing.md) doesn't
-fire — it's just *silently not progressing*. As with all archiving checks, pgbot reads
-only `pg_stat_archiver` timestamps and never the `archive_command` value. On a detected
-managed provider this is downgraded to `info`.
+fire. The elapsed time is measured at collection, not when a stored Context is viewed,
+so recomputing the same Context produces the same finding. A zero `CollectedAt` is
+unknown and does not fall back to the viewer's clock. As with all archiving checks,
+pgbot reads only `pg_stat_archiver` timestamps and never the `archive_command` value.
+On a detected managed provider this is downgraded to `info`.
+
+These signals do not prove WAL was generated continuously since the last archive. The
+WAL rate is a short sample at collection time, and this finding is emitted only when a
+previous successful archive timestamp exists. pgbot does not substitute
+`pg_stat_archiver.stats_reset` when no archive has ever succeeded because that reset
+time says nothing about when `archive_mode` became effective or when an archivable WAL
+segment became eligible.
 
 ## Why it matters
 
-A stall is more dangerous than a clean failure because there's no error to trip on.
-Postgres cannot recycle a WAL segment until it has been archived, so while the archiver
-is stuck, `pg_wal` grows without bound — this both **breaks the PITR window** (nothing
-new is being saved) and **fills the data disk** toward a hard primary outage. The
-classic cause is an archiver that stopped making progress without erroring: a hung
-`archive_command` (a network mount that blocks instead of failing), an archiver process
-that died, or a destination that accepts the connection but never completes the write.
-Because WAL keeps being produced (that's the gate), the disk clock is already ticking.
+If the signals persist while completed WAL segments become eligible, a silent stall is
+more dangerous than a clean failure because there may be no error to trip on. PostgreSQL
+retains WAL that still needs archiving, so a confirmed archiver stall can widen the gap
+in archive coverage and grow `pg_wal` toward a disk-full outage. Common causes include a
+hung `archive_command`, a stopped archiver process, or a destination that accepts a
+connection but never completes the write. The single pgbot sample is a prompt to verify
+that progress is actually stuck, not proof of how long WAL generation or archive
+failure has continued.
 
 ## How to verify it yourself
 
@@ -55,13 +64,14 @@ FROM   pg_stat_archiver;
 
 If `since_last_archive > stall_threshold`, `archive_mode` is on, `last_failed_time` is
 **not** newer than `last_archived_time`, and the primary is writing WAL right now
-(`SELECT pg_current_wal_lsn();` twice, a second apart, to confirm), the finding is
-correct. Check `pg_wal` size too: `SELECT pg_size_pretty(sum(size)) FROM pg_ls_waldir();`.
+(`SELECT pg_current_wal_lsn();` twice, a second apart, to confirm), the query reproduces
+the signals pgbot observed. Confirm that a completed segment is eligible and that
+`last_archived_time` still does not advance before diagnosing a stall. Check `pg_wal`
+size too: `SELECT pg_size_pretty(sum(size)) FROM pg_ls_waldir();`.
 
 ## How to fix it
 
-Unlike a failure, a stall often means the archiver isn't even trying — check *liveness*
-before configuration:
+After confirming eligible WAL is not progressing, check *liveness* before configuration:
 
 1. **Is the archiver process alive and moving?** Look for the archiver in
    `pg_stat_activity` / the process list. If `archive_command` hangs (a blocking NFS
@@ -84,10 +94,11 @@ touching archiving yourself.
 
 ## When to ignore it
 
-Rare for a self-managed primary, since a stall is an active disk-fill and PITR-break
-risk. The defensible case is a known, tracked incident you're mid-remediation on and
-don't want failing CI; the suppressed `critical` still shows in the report and only
-leaves the exit code. Cluster-scoped:
+Do not suppress the finding merely because the last archive is old. First distinguish a
+persistent stall from a newly enabled archiver, WAL activity that just resumed after a
+long idle period, or a sample taken before a segment became eligible. If a persistent
+stall is already a known, tracked incident under active remediation, a temporary
+suppression can keep it out of the exit code while leaving it visible. Cluster-scoped:
 
 ```toml
 [[ignore]]
@@ -104,7 +115,12 @@ expires = "2026-09-01"
 - It **never reads the `archive_command` string** (a credentials/secret leak vector),
   so it can't point at a misconfigured command — only at the resulting silence.
 - The stall gate depends on pgbot's **point-in-time** WAL sample; a primary that was
-  briefly idle during the scan can suppress a real stall (and vice versa).
+  briefly idle during the scan can suppress a real stall. Conversely, activity that
+  resumed just before the sample does not prove WAL flowed throughout the time since the
+  last archive or that a completed segment has already become eligible.
+- With no prior successful archive, the collected fields cannot distinguish a broken
+  archiver from newly enabled archiving or a workload that has not completed a segment.
+  `stats_reset` is deliberately not treated as the start of a failure interval.
 - On a managed provider it cannot see the provider's own WAL-shipping, which may be
   healthy while `pg_stat_archiver` looks stalled — hence the downgrade.
 
