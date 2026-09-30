@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"sort"
@@ -42,10 +43,46 @@ func newMCPCmd() *cobra.Command {
 				Prompts:   pgbotPrompts(),
 				Resources: pgbotResources(),
 			}
-			fmt.Fprintln(os.Stderr, "pgbot mcp: serving on stdio (ctrl-c to stop)")
-			return srv.Serve(cmd.Context(), os.Stdin, os.Stdout)
+			fmt.Fprintln(cmd.ErrOrStderr(), "pgbot mcp: serving on stdio (ctrl-c to stop)")
+			return serveMCP(cmd.Context(), srv, cmd.InOrStdin(), cmd.OutOrStdout())
 		},
 	}
+}
+
+// serveMCP owns a closeable command input only for the duration of this call.
+// Closing it interrupts an active read on cancellation; stopping or joining the
+// callback before return prevents a later cancellation from closing reused input.
+// A non-closeable Reader must unblock its own Read before cancellation can return.
+func serveMCP(ctx context.Context, srv *mcp.Server, in io.Reader, out io.Writer) error {
+	preparedIn, releaseIn, err := prepareMCPInput(in)
+	if err != nil {
+		return err
+	}
+	defer releaseIn()
+	in = preparedIn
+
+	var stopClose func()
+	if closer, ok := in.(io.Closer); ok {
+		closeDone := make(chan struct{})
+		stop := context.AfterFunc(ctx, func() {
+			defer close(closeDone)
+			_ = closer.Close()
+		})
+		stopClose = func() {
+			if !stop() {
+				<-closeDone
+			}
+		}
+	}
+
+	err = srv.Serve(ctx, in, out)
+	if stopClose != nil {
+		stopClose()
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	return err
 }
 
 func pgbotTools() []mcp.Tool {
