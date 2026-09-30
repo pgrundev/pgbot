@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"embed"
 	"sort"
+	"sync"
 )
 
 // Schema is small and forward-only; each migration is idempotent (IF NOT
@@ -12,7 +13,14 @@ import (
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
+// SQLite connection setup and idempotent DDL still contend across independent
+// handles during parallel first use. Serialize initialization, not normal I/O.
+var migrateMu sync.Mutex
+
 func (s *Store) migrate() error {
+	migrateMu.Lock()
+	defer migrateMu.Unlock()
+
 	entries, err := migrationsFS.ReadDir("migrations")
 	if err != nil {
 		return err
@@ -54,11 +62,16 @@ func (s *Store) migrateFingerprintScheme() error {
 	if err := s.db.QueryRow(`SELECT count(*) FROM snapshots`).Scan(&existing); err != nil {
 		return err
 	}
-	if _, err := s.db.Exec(`INSERT INTO meta(key, value) VALUES ('fingerprint_scheme', '2')`); err != nil {
+	res, err := s.db.Exec(`INSERT OR IGNORE INTO meta(key, value) VALUES ('fingerprint_scheme', '2')`)
+	if err != nil {
 		return err
 	}
-	if existing > 0 {
-		if _, err := s.db.Exec(`INSERT INTO meta(key, value) VALUES ('fingerprint_notice', '1')`); err != nil {
+	inserted, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if inserted > 0 && existing > 0 {
+		if _, err := s.db.Exec(`INSERT OR IGNORE INTO meta(key, value) VALUES ('fingerprint_notice', '1')`); err != nil {
 			return err
 		}
 	}
@@ -70,10 +83,9 @@ func (s *Store) migrateFingerprintScheme() error {
 // Returns "" otherwise. Callers print it once on a normal run.
 func (s *Store) UpgradeNotice() string {
 	var v string
-	if err := s.db.QueryRow(`SELECT value FROM meta WHERE key = 'fingerprint_notice'`).Scan(&v); err != nil {
+	if err := s.db.QueryRow(`DELETE FROM meta WHERE key = 'fingerprint_notice' RETURNING value`).Scan(&v); err != nil {
 		return ""
 	}
-	_, _ = s.db.Exec(`DELETE FROM meta WHERE key = 'fingerprint_notice'`)
 	return "baseline fingerprints are now per-database within a cluster (a bug fix). " +
 		"Snapshots taken before this upgrade used a cluster-wide key and won't match new runs; " +
 		"clear the old ones with `pgbot baselines prune <fingerprint>` if you don't need them."
