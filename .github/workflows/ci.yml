@@ -214,9 +214,13 @@ jobs:
           PGBOT_TEST_SUPERUSER_DSN: postgres://postgres:pw@127.0.0.1:5432/postgres
           PGBOT_TEST_LOAD: "1"
         run: |
-          # concurrent write load so the stats-caching / rate guards are meaningful
-          docker exec pg psql -U postgres -q -c \
-            "DO \$\$ BEGIN FOR i IN 1..200000 LOOP INSERT INTO people(email) VALUES('l@example.com'); IF i%50=0 THEN COMMIT; END IF; END LOOP; END \$\$;" &
+          # Concurrent write load so the stats-caching / rate guards are meaningful.
+          # Client transactions (pgbench), not a DO loop: since PG15 a backend
+          # flushes its counters to pg_stat_database only when it goes idle, so
+          # commits inside one long DO block stay invisible until it ends, and the
+          # guard would only have seen pgbot's own traffic.
+          echo "INSERT INTO people(email) VALUES ('l@example.com');" \
+            | docker exec -i pg pgbench -U postgres -n -c 2 -T 180 -f /dev/stdin postgres >/dev/null &
           go test ./internal/collect/ -run Integration -v
           # cmd/pgbot integration: the advisor's read-only-blocks-a-write proof and
           # the MCP explain_plan/schema_of tools, against the same server.
@@ -262,8 +266,9 @@ jobs:
           PGBOT_POOLER_DSN: postgres://postgres:pw@127.0.0.1:6543/postgres
           PGBOT_TEST_LOAD: "1"
         run: |
-          docker exec pg psql -U postgres -q -c \
-            "DO \$\$ BEGIN FOR i IN 1..200000 LOOP INSERT INTO t(note) VALUES('x'); IF i%50=0 THEN COMMIT; END IF; END LOOP; END \$\$;" &
+          # client transactions, visible in pg_stat_database (see the integration job)
+          echo "INSERT INTO t(note) VALUES ('x');" \
+            | docker exec -i pg pgbench -U postgres -n -c 2 -T 120 -f /dev/stdin postgres >/dev/null &
           go test ./internal/collect/ -run Integration_poolerRatesStayCorrect -v
 
   npm:
