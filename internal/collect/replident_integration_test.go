@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/pgrundev/pgbot/internal/collect"
 	"github.com/pgrundev/pgbot/internal/conn"
 	"github.com/pgrundev/pgbot/internal/findings"
 	"github.com/pgrundev/pgbot/internal/model"
+	"github.com/pgrundev/pggo"
 )
 
 // A publication over a table with no primary key is accepted by Postgres and only
@@ -25,11 +25,11 @@ func TestIntegration_replicaIdentityMissing(t *testing.T) {
 	ro := dsn(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	admin, err := pgx.Connect(ctx, su)
+	admin, err := pggo.Connect(ctx, su)
 	if err != nil {
 		t.Fatalf("admin connect: %v", err)
 	}
-	t.Cleanup(func() { admin.Close(context.Background()) })
+	t.Cleanup(func() { admin.Close() })
 
 	cleanup := func() {
 		_, _ = admin.Exec(context.Background(), `DROP PUBLICATION IF EXISTS pgbot_it_pub`)
@@ -37,7 +37,7 @@ func TestIntegration_replicaIdentityMissing(t *testing.T) {
 	}
 	cleanup()
 	t.Cleanup(cleanup)
-	if _, err := admin.Exec(ctx, `
+	if _, err := admin.SimpleQuery(ctx, `
 		CREATE TABLE public.pgbot_it_nopk (id bigint, note text);
 		INSERT INTO public.pgbot_it_nopk VALUES (1, 'a');
 		CREATE PUBLICATION pgbot_it_pub FOR TABLE public.pgbot_it_nopk`); err != nil {
