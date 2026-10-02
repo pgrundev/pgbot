@@ -62,6 +62,27 @@ func (healthCollector) Assemble(c *model.Context, _ conn.Capabilities, s sampled
 		return
 	}
 	h := &model.Health{Connections: int(b.Numbackends)}
+	// pgbot's own commits inside the window (the wait sampler's polls) are not the
+	// database's throughput: take them off sample B's commit counter before
+	// computing rates. Clamped so a reset (b < a) is still detected as such (PR#1).
+	commitsB := b.XactCommit
+	if own := s.OwnTxns; own > 0 && commitsB-own >= a.XactCommit {
+		commitsB -= own
+	}
+	statsEpochChanged := (a.StatsReset == nil) != (b.StatsReset == nil) ||
+		(a.StatsReset != nil && b.StatsReset != nil && !a.StatsReset.Equal(*b.StatsReset))
+	counterDecreased := commitsB < a.XactCommit || b.XactRollback < a.XactRollback ||
+		b.BlksRead < a.BlksRead || b.BlksHit < a.BlksHit ||
+		b.TupReturned < a.TupReturned || b.TupInserted < a.TupInserted ||
+		b.TupUpdated < a.TupUpdated || b.TupDeleted < a.TupDeleted ||
+		b.Deadlocks < a.Deadlocks || b.TempBytes < a.TempBytes
+	if statsEpochChanged || counterDecreased {
+		h.Section = model.Section{Exactness: model.ExactnessReset, Reason: "a counter reset between samples; rates omitted"}
+		setStatsWindow(c, b.StatsReset)
+		c.Health = h
+		return
+	}
+
 	reset := false
 	mark := func(v *float64, ok bool) *float64 {
 		if !ok {
@@ -69,13 +90,6 @@ func (healthCollector) Assemble(c *model.Context, _ conn.Capabilities, s sampled
 			return nil
 		}
 		return v
-	}
-	// pgbot's own commits inside the window (the wait sampler's polls) are not the
-	// database's throughput: take them off sample B's commit counter before
-	// computing rates. Clamped so a reset (b < a) is still detected as such (PR#1).
-	commitsB := b.XactCommit
-	if own := s.OwnTxns; own > 0 && commitsB-own >= a.XactCommit {
-		commitsB -= own
 	}
 	h.TPS = mark(rate.PerSecond(a.XactCommit+a.XactRollback, commitsB+b.XactRollback, dt))
 	h.CommitsPerSec = mark(rate.PerSecond(a.XactCommit, commitsB, dt))
