@@ -53,8 +53,7 @@ func DiffReport(w io.Writer, in DiffInput) error {
 	if in.ResetReason != "" {
 		fmt.Fprintln(&b, st.crit("⚠ statistics were reset between these snapshots — "+in.ResetReason))
 		fmt.Fprintln(&b, st.dim("  Comparison unavailable: statistics were reset or the server restarted between snapshots."))
-		_, _ = io.WriteString(w, b.String())
-		return
+		return writeTextReport(w, b.String())
 	}
 	if in.PgssEvicted {
 		fmt.Fprintln(&b, st.warn("⚠ pg_stat_statements evicted entries between these snapshots — query-level deltas may be incomplete"))
