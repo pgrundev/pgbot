@@ -19,7 +19,9 @@ related: [sync_rep_degraded, recovery_conflicts]
 At least one standby's `replay_lag` in `pg_stat_replication` is **≥ 60 seconds**
 (`warn`), or **≥ 300 seconds** (`critical`). The warn threshold is the
 `replica_lag_warn_seconds` tunable (default `replicaLagWarnSec = 60`); the critical
-threshold is fixed at `replicaLagCritSec = 300`. The check is **gated on WAL
+threshold is fixed at `replicaLagCritSec = 300`. Raising the warning threshold
+above 300 seconds does not suppress critical lag at or above 300 seconds. The
+check is **gated on WAL
 actually flowing** — pgbot only evaluates it when its own WAL sampling shows bytes
 being written on the primary (`WAL.BytesPerSec > 0`). That gate matters:
 `replay_lag` on an idle primary is stale and reads a reassuring "zero" even when a
@@ -90,8 +92,9 @@ expires = "2027-01-01"
 ```
 
 If some standbys are failover targets and others aren't, prefer raising
-`replica_lag_warn_seconds` to a level that only trips on the ones you care about,
-rather than muting the finding outright.
+`replica_lag_warn_seconds` to reduce subcritical warnings rather than muting the
+finding outright. This remains a cluster-wide warning threshold, not a per-standby
+filter: the fixed 300-second critical threshold still applies to every standby.
 
 ## What pgbot cannot see
 

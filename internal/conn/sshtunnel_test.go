@@ -46,7 +46,7 @@ func TestSplitTunnelSpec(t *testing.T) {
 	}
 }
 
-// A tunnel that was never configured must leave pgx's own dialer in place —
+// A tunnel that was never configured must leave the driver's own dialer in place —
 // otherwise every direct connection would start paying for this feature.
 func TestSSHDialFunc_nilWhenUnconfigured(t *testing.T) {
 	SetSSHTunnel("")

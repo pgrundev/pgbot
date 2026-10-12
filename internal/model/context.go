@@ -56,7 +56,10 @@ type Context struct {
 	Archiver    *Archiver      `json:"archiver,omitempty"`  // WAL archiving health (A15)
 	Checksums   *Checksums     `json:"checksums,omitempty"` // data-checksum failures cluster-wide (A16)
 	Standby     *StandbyStatus `json:"standby,omitempty"`   // standby-side recovery conflicts (A17)
-	Deltas      *Deltas        `json:"deltas,omitempty"`    // vs baseline; nil on first run
+	Collation   *Collation     `json:"collation,omitempty"` // collation version drift (PG15+)
+	// ReplicaIdentity is published tables that can't be updated (no usable identity).
+	ReplicaIdentity *ReplicaIdentity `json:"replica_identity,omitempty"`
+	Deltas          *Deltas          `json:"deltas,omitempty"` // vs baseline; nil on first run
 	// Set (with Deltas nil) when a stats reset / restart between runs makes any
 	// comparison fiction — e.g. serverless scale-to-zero. See T2.
 	DeltaSuppressedReason string       `json:"delta_suppressed_reason,omitempty"`
@@ -185,10 +188,12 @@ type ServerInfo struct {
 	VersionNum    int        `json:"version_num"`
 	VersionText   string     `json:"version_text"`
 	Database      string     `json:"database"`
-	Provider      string     `json:"provider,omitempty"`    // detected managed platform: rds/aurora/cloudsql/azure/supabase/neon/unknown
-	InRecovery    bool       `json:"in_recovery,omitempty"` // true on a physical standby (A15-0)
-	ViaPooler     bool       `json:"via_pooler,omitempty"`  // connected through a transaction pooler (rates still correct)
-	StartedAt     *time.Time `json:"started_at,omitempty"`  // pg_postmaster_start_time()
+	Provider      string     `json:"provider,omitempty"`      // detected managed platform: rds/aurora/cloudsql/azure/supabase/neon/unknown
+	InRecovery    bool       `json:"in_recovery,omitempty"`   // true on a physical standby (A15-0)
+	ViaPooler     bool       `json:"via_pooler,omitempty"`    // connected through a transaction pooler (rates still correct)
+	Instance      string     `json:"instance,omitempty"`      // cluster member inspected under --all-instances (Aurora DB instance identifier)
+	InstanceRole  string     `json:"instance_role,omitempty"` // "writer" | "reader" under --all-instances
+	StartedAt     *time.Time `json:"started_at,omitempty"`    // pg_postmaster_start_time()
 	UptimeSeconds int64      `json:"uptime_seconds"`
 	Extensions    []string   `json:"extensions"`
 	Capabilities  []string   `json:"capabilities"` // human-readable flags that were satisfied
@@ -458,6 +463,37 @@ type ChecksumFailure struct {
 	Database    string     `json:"database"`
 	Count       int64      `json:"count"`
 	LastFailure *time.Time `json:"last_failure,omitempty"`
+}
+
+// Collation lists this database's catalog objects whose recorded collation
+// version no longer matches what the server's libc/ICU reports now (PG15+): the
+// database default (pg_database.datcollversion) and per-collation entries
+// (pg_collation.collversion). Empty = healthy.
+type Collation struct {
+	Section
+	Mismatches []CollationMismatch `json:"mismatches,omitempty"`
+}
+
+type CollationMismatch struct {
+	Kind     string `json:"kind"`     // database | collation
+	Name     string `json:"name"`     // the database, or schema.collation
+	Provider string `json:"provider"` // libc | icu | builtin
+	Recorded string `json:"recorded_version"`
+	Actual   string `json:"actual_version"` // "" when the library reports none
+}
+
+// ReplicaIdentity lists tables published for UPDATE/DELETE whose replica identity
+// can't identify a row, so those writes error. Empty = healthy.
+type ReplicaIdentity struct {
+	Section
+	Unidentifiable []PublishedTable `json:"unidentifiable,omitempty"`
+}
+
+type PublishedTable struct {
+	Schema       string `json:"schema"`
+	Name         string `json:"table"`
+	Identity     string `json:"identity"`     // relreplident: d | n | i | f
+	Publications string `json:"publications"` // comma-separated names
 }
 
 // Archiver is WAL archiving health from pg_stat_archiver. HasArchiveCommand is

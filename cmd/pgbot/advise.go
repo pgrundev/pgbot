@@ -7,10 +7,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/pgrundev/pgbot/internal/advisor"
 	"github.com/pgrundev/pgbot/internal/conn"
 	"github.com/pgrundev/pgbot/internal/render"
+	"github.com/pgrundev/pggo"
 	"github.com/spf13/cobra"
 )
 
@@ -22,7 +22,13 @@ type adviseFlags struct {
 	timeout        time.Duration
 }
 
+type adviseRunner func(context.Context, string, int, float64) (adviseResult, error)
+
 func newAdviseCmd() *cobra.Command {
+	return newAdviseCmdWithRunner(nil)
+}
+
+func newAdviseCmdWithRunner(run adviseRunner) *cobra.Command {
 	var f adviseFlags
 	cmd := &cobra.Command{
 		Use:   "advise <connection-string>",
@@ -36,7 +42,10 @@ func newAdviseCmd() *cobra.Command {
 			"plans your query — it never executes it.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAdvise(cmd, args, f)
+			if run == nil {
+				return runAdvise(cmd, args, f)
+			}
+			return runAdviseWithRunner(cmd, args, f, run)
 		},
 	}
 	fl := cmd.Flags()
@@ -83,8 +92,8 @@ func adviseRun(ctx context.Context, connString string, top int, minImpr float64)
 
 	// One READ ONLY transaction for the whole loop: hypopg state is per-connection,
 	// so the hypothetical indexes and their reset must share a single connection.
-	err = target.ReadOnlyTx(ctx, func(tx pgx.Tx) error {
-		p := pgxPlanner{tx: tx, caps: target.Caps}
+	err = target.ReadOnlyTx(ctx, func(tx *pggo.Tx) error {
+		p := txPlanner{tx: tx, caps: target.Caps}
 		defer p.ResetHypo(context.Background()) //nolint:errcheck // belt-and-braces cleanup
 		res.Recs, res.Stats = advisor.Advise(ctx, p, inputs, advisor.Options{
 			MinImprovement: minImpr, StaleRelations: stale, WriteHeavy: writeHeavy,
@@ -98,6 +107,10 @@ func adviseRun(ctx context.Context, connString string, top int, minImpr float64)
 }
 
 func runAdvise(cmd *cobra.Command, args []string, f adviseFlags) error {
+	return runAdviseWithRunner(cmd, args, f, adviseRun)
+}
+
+func runAdviseWithRunner(cmd *cobra.Command, args []string, f adviseFlags, run adviseRunner) error {
 	connString := firstNonEmpty(argAt(args, 0), os.Getenv("DATABASE_URL"), os.Getenv("PGBOT_DATABASE_URL"), pgServiceFallback())
 	if connString == "" {
 		return fmt.Errorf("no connection string (pass one or set $DATABASE_URL)")
@@ -105,7 +118,7 @@ func runAdvise(cmd *cobra.Command, args []string, f adviseFlags) error {
 	ctx, cancel := context.WithTimeout(cmd.Context(), f.timeout)
 	defer cancel()
 
-	res, err := adviseRun(ctx, connString, f.top, f.minImprovement)
+	res, err := run(ctx, connString, f.top, f.minImprovement)
 	if err != nil {
 		return err
 	}
@@ -124,12 +137,11 @@ func runAdvise(cmd *cobra.Command, args []string, f adviseFlags) error {
 			"skipped_stale":   stats.SkippedStaleStats,
 		})
 	}
-	render.AdvisorReport(os.Stdout, render.AdvisorInput{
+	return render.AdvisorReport(cmd.OutOrStdout(), render.AdvisorInput{
 		Color: useColor(f.noColor), Database: res.Database, VersionNum: res.VersionNum,
 		Recommendations: recs, Considered: stats.QueriesConsidered, Planned: stats.QueriesPlanned,
 		Candidates: stats.CandidatesTested, SkippedStale: stats.SkippedStaleStats,
 	})
-	return nil
 }
 
 // suggestIndexesTool is the MCP counterpart to `pgbot advise`: validated index
@@ -255,7 +267,7 @@ func relationStats(ctx context.Context, t *conn.Target) (stale, writeHeavy map[s
 	return stale, writeHeavy
 }
 
-// pgxPlanner implements advisor.Planner over a READ ONLY pgx transaction. Every
+// txPlanner implements advisor.Planner over a READ ONLY transaction. Every
 // statement is plan-only or hypothetical — none executes the inspected query.
 //
 // Each fallible operation is wrapped in a SAVEPOINT: a query pgbot can't plan (or
@@ -264,8 +276,8 @@ func relationStats(ctx context.Context, t *conn.Target) (stale, writeHeavy map[s
 // clears the error and lets the loop continue to the next query. hypopg indexes
 // live in backend memory, not transaction state, so they survive a savepoint
 // rollback — only hypopg_reset drops them.
-type pgxPlanner struct {
-	tx   pgx.Tx
+type txPlanner struct {
+	tx   *pggo.Tx
 	caps conn.Capabilities // for hypopg's schema — its functions are called by qualified name
 }
 
@@ -273,18 +285,18 @@ type pgxPlanner struct {
 // pg_stat_statements, hypopg lands in Supabase's "extensions" schema (issue #10)
 // — off a read-only role's search_path — so the fixed function names are
 // qualified with the namespace the probe read from pg_extension.
-func (p pgxPlanner) hypo(fn string) string { return p.caps.ExtObject("hypopg", fn) }
+func (p txPlanner) hypo(fn string) string { return p.caps.ExtObject("hypopg", fn) }
 
-func (p pgxPlanner) GenericPlan(ctx context.Context, query string) ([]byte, error) {
+func (p txPlanner) GenericPlan(ctx context.Context, query string) ([]byte, error) {
 	// GENERIC_PLAN plans a normalized $N query without values; FORMAT JSON gives one
-	// row. This MUST use the raw simple-query protocol (PgConn.Exec): both the
-	// extended protocol and pgx's SimpleProtocol mode treat the $1/$2 inside the
-	// EXPLAIN'd query as bind parameters of the OUTER statement and demand values
-	// ("expected 2 arguments, got 0"). GENERIC_PLAN exists precisely to plan those
-	// placeholders WITHOUT values, so the SQL must reach the server byte-for-byte.
+	// row. This MUST use the simple-query protocol (Conn.SimpleQuery): the
+	// extended protocol treats the $1/$2 inside the EXPLAIN'd query as bind
+	// parameters of the OUTER statement and demands values. GENERIC_PLAN exists
+	// precisely to plan those placeholders WITHOUT values, so the SQL must reach
+	// the server byte-for-byte.
 	var js []byte
 	err := p.inSavepoint(ctx, func() error {
-		res, err := p.tx.Conn().PgConn().Exec(ctx, "EXPLAIN (GENERIC_PLAN, FORMAT JSON) "+query).ReadAll()
+		res, err := p.tx.Conn().SimpleQuery(ctx, "EXPLAIN (GENERIC_PLAN, FORMAT JSON) "+query)
 		if err != nil {
 			return err
 		}
@@ -299,7 +311,7 @@ func (p pgxPlanner) GenericPlan(ctx context.Context, query string) ([]byte, erro
 	return js, err
 }
 
-func (p pgxPlanner) CreateHypoIndex(ctx context.Context, ddl string) (string, int64, error) {
+func (p txPlanner) CreateHypoIndex(ctx context.Context, ddl string) (string, int64, error) {
 	var oid uint32
 	var name string
 	var estBytes int64
@@ -315,14 +327,14 @@ func (p pgxPlanner) CreateHypoIndex(ctx context.Context, ddl string) (string, in
 	return name, estBytes, err
 }
 
-func (p pgxPlanner) ResetHypo(ctx context.Context) error {
+func (p txPlanner) ResetHypo(ctx context.Context) error {
 	_, err := p.tx.Exec(ctx, "SELECT "+p.hypo("hypopg_reset")+"()")
 	return err
 }
 
 // inSavepoint runs fn between a SAVEPOINT and its RELEASE, rolling back to the
 // savepoint on error so a single failed statement doesn't poison the transaction.
-func (p pgxPlanner) inSavepoint(ctx context.Context, fn func() error) error {
+func (p txPlanner) inSavepoint(ctx context.Context, fn func() error) error {
 	if _, err := p.tx.Exec(ctx, "SAVEPOINT pgbot_adv"); err != nil {
 		return err
 	}

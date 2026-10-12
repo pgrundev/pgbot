@@ -5,10 +5,10 @@ import (
 	_ "embed"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/pgrundev/pgbot/internal/conn"
 	"github.com/pgrundev/pgbot/internal/model"
 	"github.com/pgrundev/pgbot/internal/rate"
+	"github.com/pgrundev/pggo"
 )
 
 //go:embed sql/health.sql
@@ -51,7 +51,7 @@ func (healthCollector) Sample(ctx context.Context, t *conn.Target, _ conn.Capabi
 	if err != nil {
 		return healthSample{}, err
 	}
-	return pgx.CollectExactlyOneRow(rows, pgx.RowToStructByNameLax[healthSample])
+	return pggo.CollectOneStruct[healthSample](rows)
 }
 
 func (healthCollector) Assemble(c *model.Context, _ conn.Capabilities, s sampled, dt time.Duration, _ Options) {

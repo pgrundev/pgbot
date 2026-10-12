@@ -16,6 +16,7 @@ const (
 
 	// Endpoints the explicit PGBOT_AI_PROVIDER aliases stand for.
 	defaultOpenRouterURL = "https://openrouter.ai/api/v1"
+	defaultRequestyURL   = "https://router.requesty.ai/v1"
 	defaultOllamaURL     = "http://localhost:11434/v1"
 
 	// Applied only to reasoning models. Override with $PGBOT_AI_REASONING_EFFORT

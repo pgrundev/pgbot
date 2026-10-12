@@ -48,7 +48,7 @@ func PrometheusAll(w io.Writer, contexts []*model.Context) error {
 	}
 
 	for _, c := range contexts {
-		db := esc(c.Server.Database)
+		db := promScope(c)
 		counts := map[string]int{}
 		for _, f := range c.Findings {
 			// Preexisting findings (--fail-on-new) don't count: the exit code
@@ -58,13 +58,13 @@ func PrometheusAll(w io.Writer, contexts []*model.Context) error {
 			if !f.Suppressed && !f.Preexisting {
 				counts[f.Severity]++
 			}
-			finding.add(fmt.Sprintf("pgbot_finding{database=\"%s\",id=\"%s\",severity=\"%s\",dimension=\"%s\",object=\"%s\",suppressed=\"%s\",preexisting=\"%s\",destructive=\"%s\"} 1",
+			finding.add(fmt.Sprintf("pgbot_finding{%s,id=\"%s\",severity=\"%s\",dimension=\"%s\",object=\"%s\",suppressed=\"%s\",preexisting=\"%s\",destructive=\"%s\"} 1",
 				db, esc(f.ID), esc(f.Severity), esc(f.Impact.Dimension), esc(f.Object), boolLabel(f.Suppressed),
 				boolLabel(f.Preexisting),
 				boolLabel(f.Safety != nil && len(f.Safety.BlockingCaveats) > 0)))
 		}
 		for _, sev := range []string{"critical", "warn", "info"} {
-			total.add(fmt.Sprintf("pgbot_findings_total{database=\"%s\",severity=\"%s\"} %d", db, sev, counts[sev]))
+			total.add(fmt.Sprintf("pgbot_findings_total{%s,severity=\"%s\"} %d", db, sev, counts[sev]))
 		}
 
 		// Underlying gauges — the numbers behind the findings, so alerts can trigger
@@ -92,7 +92,7 @@ func PrometheusAll(w io.Writer, contexts []*model.Context) error {
 					if name == "" {
 						name = rep.ClientAddr
 					}
-					replicaLag.add(fmt.Sprintf("pgbot_replica_lag_seconds{database=\"%s\",replica=\"%s\"} %g", db, esc(name), *rep.ReplayLagSec))
+					replicaLag.add(fmt.Sprintf("pgbot_replica_lag_seconds{%s,replica=\"%s\"} %g", db, esc(name), *rep.ReplayLagSec))
 				}
 			}
 		}
@@ -115,10 +115,23 @@ type promFamily struct {
 
 func (f *promFamily) add(sample string) { f.samples = append(f.samples, sample) }
 
-// set writes one plain database-labelled gauge sample. db arrives already
-// escaped by esc; wrapping it in %q would escape it a second time.
-func (f *promFamily) set(db string, v float64) {
-	f.add(fmt.Sprintf("%s{database=\"%s\"} %g", f.name, db, v))
+// set writes one plain scope-labelled gauge sample. scope arrives already
+// rendered by promScope (values escaped by esc; wrapping them in %q would escape
+// them a second time).
+func (f *promFamily) set(scope string, v float64) {
+	f.add(fmt.Sprintf("%s{%s} %g", f.name, scope, v))
+}
+
+// promScope renders the labels that identify one Context's series: the database,
+// plus the cluster member under --all-instances — without it, two instances'
+// samples for the same database would be duplicate series and the textfile
+// collector would reject the file. Single-instance output is unchanged.
+func promScope(c *model.Context) string {
+	scope := fmt.Sprintf("database=\"%s\"", esc(c.Server.Database))
+	if c.Server.Instance != "" {
+		scope += fmt.Sprintf(",instance=\"%s\",role=\"%s\"", esc(c.Server.Instance), esc(c.Server.InstanceRole))
+	}
+	return scope
 }
 
 // gauge writes a sample from an optional float pointer (skipped when nil).

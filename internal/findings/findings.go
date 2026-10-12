@@ -126,6 +126,7 @@ var knownIDs = map[string]bool{
 	"sync_rep_degraded": true, "replica_lag_time": true, "recovery_conflicts": true,
 	"replica_disconnected": true, "checksum_failures": true,
 	"ignore_checksum_failure_on": true, "checksums_disabled": true,
+	"collation_version_mismatch": true, "replica_identity_missing": true,
 	"archiving_failing": true, "archiving_stalled": true, "archiving_disabled": true,
 	"replication_slot_inactive": true, "subscription_worker_down": true,
 	"query_slowdown": true, "pgss_entries_evicted": true, "work_mem_low": true,
@@ -145,8 +146,8 @@ func KnownID(id string) bool { return knownIDs[id] }
 // Tunables are the thresholds a user config may override ([thresholds] in
 // .pgbot.toml). Only these keys are wired — everything else stays a compiled-in
 // const (an unknown key in a config is a loud warning, not a silent no-op).
-// Applied BEFORE the finding is produced, so a raised threshold means the
-// finding is never generated at all (B2-2 precedence rule 1).
+// Applied BEFORE the finding is produced (B2-2 precedence rule 1). Raising a
+// warning threshold does not override a separate compiled-in critical threshold.
 type Tunables struct {
 	UnusedIndexMinBytes int64   // unused_index_min_size_mb × 1MiB
 	DeadRatioWarn       float64 // dead_ratio_warn
@@ -194,6 +195,8 @@ func ComputeWithTunables(c *model.Context, tun Tunables) []model.Finding {
 	int4IdentityColumn(c, add)
 	walArchiving(c, add)
 	checksumFindings(c, add)
+	collationVersionMismatch(c, add)
+	replicaIdentityMissing(c, add)
 	failoverReadiness(c, add, tun)
 	replicationSlotRisk(c, add)
 	subscriptionDown(c, add)
@@ -1433,7 +1436,9 @@ func failoverReadiness(c *model.Context, add func(model.Finding), tun Tunables) 
 		var ev []string
 		worst, crit := 0.0, false
 		for _, r := range c.Replication.Replicas {
-			if r.ReplayLagSec == nil || *r.ReplayLagSec < tun.ReplicaLagWarnSec {
+			// The configurable warning gate must not suppress the fixed critical
+			// boundary when a user raises it above replicaLagCritSec.
+			if r.ReplayLagSec == nil || (*r.ReplayLagSec < tun.ReplicaLagWarnSec && *r.ReplayLagSec < replicaLagCritSec) {
 				continue
 			}
 			if *r.ReplayLagSec > worst {
@@ -1588,6 +1593,90 @@ func checksumFindings(c *model.Context, add func(model.Finding)) {
 			Confidence:  1.0,
 		})
 	}
+}
+
+// collationVersionMismatch flags catalog objects whose recorded collation version
+// no longer matches the running library: libc or ICU changed under the data (an
+// OS upgrade, a new base image, a restore onto a different host), so any btree
+// over text sorted by that collation may be silently out of order — lookups miss
+// rows and UNIQUE constraints stop catching duplicates. Critical when it is the
+// database default (every unqualified text index); warn for a named collation.
+func collationVersionMismatch(c *model.Context, add func(model.Finding)) {
+	if c.Collation == nil || len(c.Collation.Mismatches) == 0 {
+		return
+	}
+	var ev []string
+	dbDefault := false
+	for _, m := range c.Collation.Mismatches {
+		actual := m.Actual
+		if actual == "" {
+			actual = "unknown"
+		}
+		if m.Kind == "database" {
+			dbDefault = true
+			ev = append(ev, fmt.Sprintf("database default (%s): recorded %s, library now %s", m.Provider, m.Recorded, actual))
+			continue
+		}
+		ev = append(ev, fmt.Sprintf("collation %s (%s): recorded %s, library now %s", m.Name, m.Provider, m.Recorded, actual))
+	}
+	n := len(c.Collation.Mismatches)
+	sev, score := model.SeverityWarn, 60.0
+	title := fmt.Sprintf("%d collation(s) changed version under this database", n)
+	if dbDefault {
+		sev, score = model.SeverityCritical, 88
+		title = "the database's default collation changed version — text indexes may be corrupt"
+	}
+	add(model.Finding{
+		ID: "collation_version_mismatch", Object: "db:" + c.Server.Database, Severity: sev,
+		Title:       title,
+		Detail:      "The library that defines this collation's sort order (libc or ICU) is a different version from the one the catalog recorded when the collation was created. If the order changed — glibc 2.28 did for most locales — every btree index over text using it is silently out of order: equality lookups miss rows, range scans skip them, and UNIQUE constraints stop catching duplicates. Postgres warns at connect time but repairs nothing.",
+		Evidence:    ev,
+		Remediation: "REINDEX every index over text columns using the affected collation (REINDEX DATABASE CONCURRENTLY for the default), then record the new version with ALTER DATABASE … REFRESH COLLATION VERSION or ALTER COLLATION … REFRESH VERSION so the warning stops.",
+		Caveats: []string{
+			"Refresh the version only AFTER reindexing — REFRESH COLLATION VERSION updates the catalog and silences the warning; it repairs nothing.",
+			"A version change does not prove the sort order changed for your locale, but the only way to know is to reindex; treat the indexes as suspect until then.",
+		},
+		Impact:     impact(model.DimRisk, score, fmt.Sprintf("%d collation version mismatch(es)", n), "datcollversion/collversion ≠ the library's actual version"),
+		Confidence: 1.0,
+	})
+}
+
+// replicaIdentityMissing flags tables published for UPDATE/DELETE with no usable
+// replica identity. Postgres accepts the publication and the schema, then rejects
+// the write at runtime, so this is a live breakage a migration can introduce.
+func replicaIdentityMissing(c *model.Context, add func(model.Finding)) {
+	if c.ReplicaIdentity == nil || len(c.ReplicaIdentity.Unidentifiable) == 0 {
+		return
+	}
+	why := map[string]string{
+		"d": "replica identity default and no primary key",
+		"n": "replica identity nothing",
+		"i": "replica identity index, but the nominated index is missing or invalid",
+	}
+	var ev, objs []string
+	for _, t := range c.ReplicaIdentity.Unidentifiable {
+		rel := t.Schema + "." + t.Name
+		reason := why[t.Identity]
+		if reason == "" {
+			reason = "replica identity " + t.Identity
+		}
+		objs = append(objs, rel)
+		ev = append(ev, fmt.Sprintf("%s — %s (published by %s)", rel, reason, t.Publications))
+	}
+	n := len(objs)
+	add(model.Finding{
+		ID: "replica_identity_missing", Severity: model.SeverityCritical, Objects: objs,
+		Title:       fmt.Sprintf("%d published table(s) reject UPDATE and DELETE — no replica identity", n),
+		Detail:      "A table published for UPDATE or DELETE needs a replica identity so the subscriber can find the row to change. Without one Postgres rejects the write itself: \"cannot update table … because it does not have a replica identity and publishes updates\". Reads and INSERTs keep working, so this usually surfaces as the first UPDATE after a migration, not at deploy time.",
+		Evidence:    ev,
+		Remediation: "Give each table a primary key, or point the identity at an existing UNIQUE index on NOT NULL columns with ALTER TABLE … REPLICA IDENTITY USING INDEX <index>. Where neither fits, REPLICA IDENTITY FULL works, or drop the table from the publication.",
+		Caveats: []string{
+			"REPLICA IDENTITY FULL puts every column in the WAL record and makes the subscriber match rows without an index — correct, but costly on a large or busy table.",
+			"A partitioned table published with publish_via_partition_root replicates as the root; pgbot reports the relation the catalog names, which may be a partition.",
+		},
+		Impact:     impact(model.DimRisk, 92, fmt.Sprintf("%d published table(s) cannot be updated", n), "relreplident with no usable identity on a table in an UPDATE/DELETE publication"),
+		Confidence: 1.0,
+	})
 }
 
 // walArchiving flags the WAL-archiving / PITR failure modes. On a detected

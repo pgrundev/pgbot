@@ -21,8 +21,10 @@ Lost durability, corruption, wraparound, replication — things that end in an o
 - **[full_page_writes_off](full_page_writes_off.md)** · Critical — full_page_writes off — a crash can leave torn pages
 - **[ignore_checksum_failure_on](ignore_checksum_failure_on.md)** · Critical — ignore_checksum_failure is on — corrupt pages are returned, not caught
 - **[index_invalid](index_invalid.md)** · Critical — a failed CREATE INDEX CONCURRENTLY left an invalid index — critical if it's still maintained on writes, warn if it's failed-build debris
+- **[replica_identity_missing](replica_identity_missing.md)** · Critical — a published table has no replica identity, so UPDATE and DELETE on it fail
 - **[sync_rep_degraded](sync_rep_degraded.md)** · Critical — fewer synchronous standbys connected than the config requires
 - **[archiving_disabled](archiving_disabled.md)** · Warn — archive_mode is off — no continuous WAL archive for PITR
+- **[collation_version_mismatch](collation_version_mismatch.md)** · Warn — the collation library changed version under the data — text indexes may be silently out of order
 - **[connection_saturation](connection_saturation.md)** · Warn — connections approaching max_connections
 - **[idle_in_transaction](idle_in_transaction.md)** · Warn — sessions idle inside an open transaction, holding locks and the xmin horizon
 - **[int4_identity_column](int4_identity_column.md)** · Warn — a sequence-backed int2/int4 column that will wrap (int4 at 2.1B) regardless of current value

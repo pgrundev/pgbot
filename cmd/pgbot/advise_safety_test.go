@@ -5,8 +5,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/pgrundev/pgbot/internal/conn"
+	"github.com/pgrundev/pggo"
 )
 
 // TestAdviseSafety_readOnlyTxBlocksInjectedWrite is the belt-and-braces proof for
@@ -28,12 +28,12 @@ func TestIntegration_adviseSafety_readOnlyTxBlocksInjectedWrite(t *testing.T) {
 	ctx := context.Background()
 
 	// A raw connection (NOT pgbot-pinned) to set up and later inspect the table.
-	admin, err := pgx.Connect(ctx, d)
+	admin, err := pggo.Connect(ctx, d)
 	if err != nil {
 		t.Fatalf("admin connect: %v", err)
 	}
-	defer admin.Close(ctx)
-	if _, err := admin.Exec(ctx, `DROP TABLE IF EXISTS advise_safety; CREATE TABLE advise_safety (n int)`); err != nil {
+	defer admin.Close()
+	if _, err := admin.SimpleQuery(ctx, `DROP TABLE IF EXISTS advise_safety; CREATE TABLE advise_safety (n int)`); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
@@ -47,8 +47,8 @@ func TestIntegration_adviseSafety_readOnlyTxBlocksInjectedWrite(t *testing.T) {
 	// sanitizeQuery, exactly as a hostile pgss entry would if the sanitizer missed
 	// it. The second statement is a write.
 	injected := "EXPLAIN (GENERIC_PLAN, FORMAT JSON) SELECT 1; INSERT INTO advise_safety VALUES (1)"
-	_ = target.ReadOnlyTx(ctx, func(tx pgx.Tx) error {
-		_, _ = tx.Conn().PgConn().Exec(ctx, injected).ReadAll()
+	_ = target.ReadOnlyTx(ctx, func(tx *pggo.Tx) error {
+		_, _ = tx.Conn().SimpleQuery(ctx, injected)
 		return nil
 	})
 

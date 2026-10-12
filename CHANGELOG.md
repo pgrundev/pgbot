@@ -3,11 +3,31 @@
 All notable changes to pgbot are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims for
 [Semantic Versioning](https://semver.org/). The `--json` contract is versioned
-separately by `model.SchemaVersion` (currently 1.2.0).
+separately by `model.SchemaVersion` (currently 1.5.0).
 
 ## [Unreleased]
 
 ### Changed
+- **PostgreSQL driver: pgx → [pgGo](https://github.com/pgrundev/pggo).** pgbot
+  now talks to PostgreSQL through pgGo, a dependency-free wire-protocol client
+  (standard library only). Output is unchanged apart from pgbot's own
+  footprint in the counters it samples (below) — verified by running the pgx
+  and pgGo builds side by side against PostgreSQL 16–19, a streaming standby,
+  PgBouncer (transaction mode) and PgDog. Read-only
+  guarantees are unchanged: the same session pins and `READ ONLY` transactions,
+  enforced by PostgreSQL. Effects you may notice:
+  - The binary is ~5 MB smaller (4 fewer modules: pgx, pgpassfile,
+    pgservicefile, puddle); runs need fewer round trips (`BEGIN` is pipelined
+    with each collector's first query).
+  - pgbot's own traffic is less visible in `pg_stat_database` during the
+    sample window, so throughput on a near-idle database is reported closer to
+    the truth (pgx builds counted ~15–20 tps of pgbot's own commits; with a
+    rate-limited 200 tps workload pgx reported ~220, pgGo ~200). On an idle
+    database, cache hit and rollbacks now show `—` (nothing measured) where the
+    pgx build graded pgbot's own reads.
+  - Behind a transaction pooler no protocol fallback is needed any more: pgGo
+    only uses unnamed statements, parsed and executed within one sync. The
+    prepared-statement probe still runs and still counts as a pooler signal.
 - **Gauge strip in the default `inspect` view.** Four vital signs sit right
   under the header — cache hit, lock wait (naming the culprit query when
   sessions are blocked), rollbacks, and idle index bytes as a share of the
@@ -21,13 +41,49 @@ separately by `model.SchemaVersion` (currently 1.2.0).
   `pgbot ask "why is it slow?"`.
 
 ### Added
+- **`replica_identity_missing` finding.** A table published for `UPDATE` or
+  `DELETE` with no usable replica identity — `DEFAULT` and no primary key,
+  `NOTHING`, or `USING INDEX` whose index is gone — makes Postgres reject the
+  write itself (`cannot update table … because it does not have a replica
+  identity and publishes updates`). Reads and INSERTs keep working, so the
+  failure lands on the first UPDATE after a migration rather than at deploy
+  time. Read from `pg_publication` and `pg_class`, so it is `schema` scope and
+  runs under `--profile=schema` / `pgbot lint` on an empty CI database.
+  Insert-only publications need no identity and are not reported. New
+  `replica_identity` section in `--json`; `SchemaVersion` → **1.5.0** (additive;
+  a 1.4.0 consumer parses it unchanged).
+- **`collation_version_mismatch` finding** (PG15+). The collation library
+  (libc or ICU) that defines text sort order changed version under the data —
+  an OS upgrade, a new base image, a restore onto a different host — so every
+  btree over text sorted by it may be silently out of order: lookups miss rows
+  and `UNIQUE` stops catching duplicates. Read from `pg_database.datcollversion`
+  and `pg_collation.collversion` against the library's actual version; critical
+  when it is the database default, warn for a named collation. The remediation
+  is REINDEX **then** `REFRESH COLLATION VERSION`, in that order — the caveat
+  says why. New `collation` section in `--json`; `SchemaVersion` → **1.3.0**
+  (additive; a 1.2.0 consumer parses it unchanged).
+- **`pgbot inspect --all-instances` — every Aurora writer and reader behind one
+  endpoint (experimental)** (#23). An Aurora cluster endpoint stands for several
+  instances; this discovers the members with `aurora_replica_status()`, derives
+  each instance endpoint from the cluster endpoint's DNS name (custom domains
+  are followed through their CNAME), verifies each derived endpoint reached the
+  member it names with `aurora_db_instance_identifier()` before collecting, and
+  inspects every one through the existing fan-out — writer first, then readers,
+  composing with `--all-databases`. SQL and DNS only: no AWS credentials, CLI,
+  SDK, or API. An RDS Proxy endpoint, a non-RDS name, or an unreachable member
+  fails loudly rather than guessing; missing members mean partial coverage and
+  exit 3. Text output banners each target, JSON carries `server.instance` and
+  `server.instance_role`, SARIF/JUnit objects are prefixed `instance:<id>/`, and
+  Prometheus series gain `instance` and `role` labels. `SchemaVersion` →
+  **1.4.0** (additive; a 1.3.0 consumer parses it unchanged). Needs validation on a
+  real cluster — please report the cluster endpoint shape if derivation fails.
 - **`$PGSERVICE` as a connection fallback** (#25). When no connection string
   is passed and neither `$DATABASE_URL` nor `$PGBOT_DATABASE_URL` is set,
   pgbot now checks `$PGSERVICE` too, so a
   [connection service file](https://www.postgresql.org/docs/current/libpq-pgservice.html)
-  alone is enough to pick a database. pgx's `ParseConfig` already reads
+  alone is enough to pick a database. The driver's `ParseConfig` already reads
   `PGSERVICEFILE` (or the libpq default path); this just stops pgbot from
-  erroring out before pgx gets a chance to.
+  erroring out before the driver gets a chance to.
 - **AWS Bedrock Mantle as an `explain` / `ask` provider** (#35, contributed by
   @edwardsb). `PGBOT_AI_PROVIDER=bedrock` (alias `mantle`) routes `openai.*`
   models through the Responses API and `anthropic.*` models through the
@@ -41,7 +97,16 @@ separately by `model.SchemaVersion` (currently 1.2.0).
   `eval "$(aws configure export-credentials --format env)"`. Access keys only
   ever go to the Mantle host for the configured region, and Bedrock requests
   never follow redirects.
+- **Requesty as an `explain` / `ask` provider.** `PGBOT_AI_PROVIDER=requesty`
+  sends `/chat/completions` to `https://router.requesty.ai/v1` with
+  `REQUESTY_API_KEY` (or `PGBOT_AI_API_KEY`), the same way the `openrouter`
+  alias works. It is never auto-detected, and it never picks up an OpenAI or
+  OpenRouter key.
 
+### Changed
+- `model.ServerInfo` gains `instance` and `instance_role` (additive). JSON
+  contract `SchemaVersion` → **1.3.0**; a 1.2.0 consumer still parses 1.3.0
+  output unchanged.
 ### Fixed
 - **Connection-string redaction now covers `?password=` in URL form.** libpq
   accepts the password as a query parameter as well as in the userinfo; the

@@ -26,7 +26,7 @@ func TestIntegration_cancelMidRun(t *testing.T) {
 	defer target.Close()
 
 	// Warm the pool with one full run first, so the goroutine baseline reflects
-	// steady state (pgx pool goroutines up, that run's sampler already drained) —
+	// steady state (pool goroutines up, that run's sampler already drained) —
 	// otherwise we'd be measuring pool warm-up, not a sampler leak.
 	if _, err := collect.Run(context.Background(), target,
 		collect.Options{Interval: 200 * time.Millisecond, ASHHz: 10, ASHWindow: 200 * time.Millisecond}); err != nil {

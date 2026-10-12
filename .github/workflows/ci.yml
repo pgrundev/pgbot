@@ -44,7 +44,7 @@ jobs:
       # change the gate out from under a green PR.
       - name: golangci-lint
         run: |
-          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
           "$(go env GOPATH)/bin/golangci-lint" run ./...
       # A security-positioned tool must scan its own dependency tree.
       - name: govulncheck
@@ -146,6 +146,21 @@ jobs:
           fi
           echo "clean: no EXPLAIN ANALYZE"
 
+  nix:
+    name: nix build
+    # vendorHash changes with every dependency bump, so this job is
+    # informational — a red nix build must not block an otherwise green PR.
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - run: nix build .#pgbot
+      # proves the ldflags version stamp reached the packaged binary
+      - run: ./result/bin/pgbot --version | grep -q 'pgbot version 0\.'
+
   build:
     name: build ${{ matrix.goos }}/${{ matrix.goarch }}
     runs-on: ubuntu-latest
@@ -170,7 +185,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pg: [14, 15, 16, 17, 18]
+        pg: [14, 15, 16, 17, 18, 19beta1]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -199,9 +214,13 @@ jobs:
           PGBOT_TEST_SUPERUSER_DSN: postgres://postgres:pw@127.0.0.1:5432/postgres
           PGBOT_TEST_LOAD: "1"
         run: |
-          # concurrent write load so the stats-caching / rate guards are meaningful
-          docker exec pg psql -U postgres -q -c \
-            "DO \$\$ BEGIN FOR i IN 1..200000 LOOP INSERT INTO people(email) VALUES('l@example.com'); IF i%50=0 THEN COMMIT; END IF; END LOOP; END \$\$;" &
+          # Concurrent write load so the stats-caching / rate guards are meaningful.
+          # Client transactions (pgbench), not a DO loop: since PG15 a backend
+          # flushes its counters to pg_stat_database only when it goes idle, so
+          # commits inside one long DO block stay invisible until it ends, and the
+          # guard would only have seen pgbot's own traffic.
+          echo "INSERT INTO people(email) VALUES ('l@example.com');" \
+            | docker exec -i pg pgbench -U postgres -n -c 2 -T 180 -f /dev/stdin postgres >/dev/null &
           go test ./internal/collect/ -run Integration -v
           # cmd/pgbot integration: the advisor's read-only-blocks-a-write proof and
           # the MCP explain_plan/schema_of tools, against the same server.
@@ -247,8 +266,9 @@ jobs:
           PGBOT_POOLER_DSN: postgres://postgres:pw@127.0.0.1:6543/postgres
           PGBOT_TEST_LOAD: "1"
         run: |
-          docker exec pg psql -U postgres -q -c \
-            "DO \$\$ BEGIN FOR i IN 1..200000 LOOP INSERT INTO t(note) VALUES('x'); IF i%50=0 THEN COMMIT; END IF; END LOOP; END \$\$;" &
+          # client transactions, visible in pg_stat_database (see the integration job)
+          echo "INSERT INTO t(note) VALUES ('x');" \
+            | docker exec -i pg pgbench -U postgres -n -c 2 -T 120 -f /dev/stdin postgres >/dev/null &
           go test ./internal/collect/ -run Integration_poolerRatesStayCorrect -v
 
   npm:

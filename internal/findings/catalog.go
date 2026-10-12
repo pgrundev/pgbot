@@ -305,6 +305,19 @@ var catalog = map[string]Meta{
 		Requires: []string{"PG12+"},
 		Related:  []string{"checksum_failures"},
 	},
+	"collation_version_mismatch": {
+		Severity: "warn", CriticalWhen: "the database's default collation is the one that changed",
+		Dimension: "risk", ObjectClass: "db",
+		Scope:    "infra",
+		Requires: []string{"PG15+"},
+	},
+	"replica_identity_missing": {
+		Severity: "critical", CriticalWhen: "",
+		Dimension: "risk", ObjectClass: "relation",
+		Scope:    "schema",
+		Requires: []string{"a publication replicating UPDATE or DELETE"},
+		Related:  []string{"subscription_worker_down", "replication_slot_inactive"},
+	},
 	"pgaudit_silent": {
 		Severity: "warn", CriticalWhen: "",
 		Dimension: "risk", ObjectClass: "setting",
@@ -552,6 +565,8 @@ var summaries = map[string]string{
 	"checksum_failures":            "Postgres read a page whose checksum didn't match — likely corruption",
 	"ignore_checksum_failure_on":   "ignore_checksum_failure is on — corrupt pages are returned, not caught",
 	"checksums_disabled":           "data checksums are off, so this class of corruption is silent",
+	"collation_version_mismatch":   "the collation library changed version under the data — text indexes may be silently out of order",
+	"replica_identity_missing":     "a published table has no replica identity, so UPDATE and DELETE on it fail",
 	"pgaudit_silent":               "pgaudit is installed but pgaudit.log selects no classes — the audit trail does not exist",
 	"pgaudit_logs_parameters":      "pgaudit.log_parameter=on writes bind parameters (passwords, PII) into the server log",
 	"pgaudit_double_logging":       "pgaudit and log_statement=all record every statement twice — duplicate log volume",

@@ -60,6 +60,79 @@ function stageFakeBinary(script) {
   return dir;
 }
 
+function waitForFile(file, timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    const deadline = Date.now() + timeoutMs;
+    function check() {
+      if (fs.existsSync(file)) {
+        resolve();
+      } else if (Date.now() >= deadline) {
+        reject(new Error(`timed out waiting for ${file}`));
+      } else {
+        setTimeout(check, 10);
+      }
+    }
+    check();
+  });
+}
+
+function waitForExit(child, timeoutMs = 5000) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
+  }
+  return new Promise((resolve, reject) => {
+    const onExit = (code, signal) => finish(null, { code, signal });
+    const timer = setTimeout(() => finish(new Error(`timed out waiting for pid ${child.pid}`)), timeoutMs);
+    function finish(err, result) {
+      clearTimeout(timer);
+      child.off('exit', onExit);
+      if (err) reject(err);
+      else resolve(result);
+    }
+    child.once('exit', onExit);
+  });
+}
+
+function processExists(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    if (err.code === 'ESRCH') return false;
+    throw err;
+  }
+}
+
+function waitForProcessGone(pid, timeoutMs = 1000) {
+  return new Promise((resolve, reject) => {
+    const deadline = Date.now() + timeoutMs;
+    function check() {
+      if (!processExists(pid)) {
+        resolve();
+      } else if (Date.now() >= deadline) {
+        reject(new Error(`timed out cleaning up pid ${pid}`));
+      } else {
+        setTimeout(check, 10);
+      }
+    }
+    check();
+  });
+}
+
+function registerCleanup(t, wrapper, getBinaryPID) {
+  t.after(async () => {
+    if (wrapper.exitCode === null && wrapper.signalCode === null) {
+      wrapper.kill('SIGKILL');
+      await waitForExit(wrapper, 1000).catch(() => {});
+    }
+    const binaryPID = getBinaryPID();
+    if (binaryPID && processExists(binaryPID)) {
+      process.kill(binaryPID, 'SIGKILL');
+      await waitForProcessGone(binaryPID);
+    }
+  });
+}
+
 test('exit code and argv pass through verbatim (2 = critical)', { skip: !posix }, () => {
   const dir = stageFakeBinary('#!/bin/sh\nprintf "args:%s\\n" "$*"\nexit ${PGBOT_FAKE_EXIT:-0}\n');
   const wrapper = path.join(dir, 'node_modules', 'pgbot', 'bin', 'pgbot.js');
@@ -77,6 +150,14 @@ test('clean exit is 0', { skip: !posix }, () => {
   assert.equal(spawnSync(process.execPath, [wrapper], { encoding: 'utf8' }).status, 0);
 });
 
+test('spawn failure exits 3 with the launch error', { skip: !posix }, () => {
+  const dir = stageFakeBinary('#!/definitely/missing/pgbot-test-interpreter\n');
+  const wrapper = path.join(dir, 'node_modules', 'pgbot', 'bin', 'pgbot.js');
+  const result = spawnSync(process.execPath, [wrapper], { encoding: 'utf8' });
+  assert.equal(result.status, 3);
+  assert.match(result.stderr, /pgbot: failed to launch/);
+});
+
 test('missing platform binary → exit 64 with an actionable message', () => {
   // Run the shim from a scratch dir with no @pgbot package to resolve.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pgbot-none-'));
@@ -86,18 +167,78 @@ test('missing platform binary → exit 64 with an actionable message', () => {
   assert.match(r.stderr, /#install/, 'error points at the install docs');
 });
 
-test('SIGTERM is forwarded to the child', { skip: !posix }, async () => {
+test('wrapper preserves a child self-SIGTERM exit', { skip: !posix }, async (t) => {
   const dir = stageFakeBinary(
-    '#!/bin/sh\ntrap \'printf caught > "$PGBOT_SIGFILE"; exit 143\' TERM\ni=0\nwhile [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done\n'
+    [
+      '#!/usr/bin/env node',
+      "const fs = require('fs');",
+      "process.stdin.once('data', () => process.kill(process.pid, 'SIGTERM'));",
+      'process.stdin.resume();',
+      "fs.writeFileSync(process.env.PGBOT_READYFILE, String(process.pid));",
+      '',
+    ].join('\n')
   );
   const wrapper = path.join(dir, 'node_modules', 'pgbot', 'bin', 'pgbot.js');
-  const sigfile = path.join(dir, 'sig');
+  const readyfile = path.join(dir, 'ready');
   const child = spawn(process.execPath, [wrapper], {
-    env: { ...process.env, PGBOT_SIGFILE: sigfile },
-    stdio: 'ignore',
+    env: { ...process.env, PGBOT_READYFILE: readyfile },
+    stdio: ['pipe', 'ignore', 'ignore'],
   });
-  await new Promise((r) => setTimeout(r, 400)); // let the fake install its trap
+  let binaryPID;
+  registerCleanup(t, child, () => binaryPID);
+
+  await waitForFile(readyfile);
+  binaryPID = Number(fs.readFileSync(readyfile, 'utf8'));
+  const exited = waitForExit(child);
+  child.stdin.end('signal now');
+  assert.deepEqual(await exited, { code: null, signal: 'SIGTERM' });
+  assert.equal(processExists(binaryPID), false, 'the signaled binary must be reaped');
+});
+
+for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
+  test(`${signal} is forwarded and preserved`, { skip: !posix }, async (t) => {
+    const dir = stageFakeBinary(
+      [
+        '#!/usr/bin/env node',
+        "require('fs').writeFileSync(process.env.PGBOT_READYFILE, String(process.pid));",
+        'setInterval(() => {}, 1000);',
+        '',
+      ].join('\n')
+    );
+    const wrapper = path.join(dir, 'node_modules', 'pgbot', 'bin', 'pgbot.js');
+    const readyfile = path.join(dir, 'ready');
+    const child = spawn(process.execPath, [wrapper], {
+      env: { ...process.env, PGBOT_READYFILE: readyfile },
+      stdio: 'ignore',
+    });
+    let binaryPID;
+    registerCleanup(t, child, () => binaryPID);
+
+    await waitForFile(readyfile);
+    binaryPID = Number(fs.readFileSync(readyfile, 'utf8'));
+    const exited = waitForExit(child);
+    child.kill(signal);
+    assert.deepEqual(await exited, { code: null, signal });
+    assert.equal(processExists(binaryPID), false, 'the signaled binary must be reaped');
+  });
+}
+
+test('forwarded SIGTERM preserves a graceful numeric exit', { skip: !posix }, async (t) => {
+  const dir = stageFakeBinary([
+    '#!/usr/bin/env node',
+    "process.on('SIGTERM', () => process.exit(143));",
+    "require('fs').writeFileSync(process.env.PGBOT_READYFILE, String(process.pid));",
+    'setInterval(() => {}, 1000);', '',
+  ].join('\n'));
+  const wrapper = path.join(dir, 'node_modules', 'pgbot', 'bin', 'pgbot.js');
+  const readyfile = path.join(dir, 'ready');
+  const child = spawn(process.execPath, [wrapper], {env:{...process.env,PGBOT_READYFILE:readyfile},stdio:'ignore'});
+  let binaryPID;
+  registerCleanup(t, child, () => binaryPID);
+  await waitForFile(readyfile);
+  binaryPID = Number(fs.readFileSync(readyfile,'utf8'));
+  const exited = waitForExit(child);
   child.kill('SIGTERM');
-  await new Promise((resolve) => child.on('exit', resolve));
-  assert.ok(fs.existsSync(sigfile), 'the child must receive the forwarded SIGTERM');
+  assert.deepEqual(await exited,{code:143,signal:null});
+  assert.equal(processExists(binaryPID),false,'gracefully exited binary must be reaped');
 });

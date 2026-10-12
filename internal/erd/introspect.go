@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/pgrundev/pggo"
 )
 
-// Querier is the one pgx capability introspection needs (satisfied by
-// *pgxpool.Pool and *pgx.Conn).
+// Querier is the one driver capability introspection needs (satisfied by
+// *pggo.Pool, *pggo.Conn and *pggo.Tx).
 type Querier interface {
-	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	Query(ctx context.Context, sql string, args ...any) (*pggo.Rows, error)
 }
 
 // Structure only — names, types, key membership. No table data is ever read;

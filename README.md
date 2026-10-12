@@ -1,4 +1,8 @@
 
+<p align="center">
+  <img src="docs/img/pgbot-mark.png" alt="" width="82" height="82">
+</p>
+
 <h1 align="center">pgbot</h1>
 
 <p align="center">
@@ -29,7 +33,7 @@
   <a href="docs/providers.md">Provider notes</a>
 </p>
 
-> **Status: beta.** The `--json` contract is versioned (currently `1.2.0`, JSON
+> **Status: beta.** The `--json` contract is versioned (currently `1.5.0`, JSON
 > Schema published in [`schema/`](schema/)) and breaking changes to it are
 > treated as breaking changes to the tool. The human-readable report is **not**
 > a stable interface — parse `--json`, not the terminal output.
@@ -256,6 +260,7 @@ Key `inspect` flags:
 | `--profile=full\|schema` | `schema` runs only catalog-derived findings — safe on an empty CI database |
 | `--fail-on-new <base.json>` | act only on findings not already in a base report (migration PRs) |
 | `--all-databases` | inspect every database in the cluster; cluster-wide findings reported once |
+| `--all-instances` | Aurora (experimental): discover every writer and reader instance behind the cluster endpoint and inspect each; composes with `--all-databases` |
 | `--config <path>` | a `.pgbot.toml` for thresholds, severity remaps, and `[[ignore]]` rules |
 
 Exit codes are a scriptable contract: `0` clean · `1` warn · `2` critical · `3`
@@ -457,6 +462,7 @@ one SSH connection serves the whole run. Raise `--timeout` if the link is slow.
 | `PGBOT_SSH_TUNNEL` | SSH jump host used when `--ssh-tunnel` isn't passed (`[user@]host[:port]`, or a `~/.ssh/config` alias). |
 | `PGBOT_CONFIG` | Path to `.pgbot.toml` (otherwise discovered from cwd upward, then `$XDG_CONFIG_HOME`). |
 | `OPENAI_API_KEY` / `OPENROUTER_API_KEY` | Enables `ask` / `explain` via OpenAI or OpenRouter. Keys are never accepted as flags. |
+| `REQUESTY_API_KEY` | Enables `ask` / `explain` via [Requesty](https://docs.requesty.ai) with `PGBOT_AI_PROVIDER=requesty` (never auto-detected). |
 | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | Enables `ask` / `explain` via Google Gemini. |
 | `ANTHROPIC_API_KEY` | Enables `ask` / `explain` via Anthropic. |
 | `XAI_API_KEY` / `GROK_API_KEY` | Enables `ask` / `explain` via xAI. |
@@ -709,7 +715,11 @@ not require confirmation.
 | Bedrock Mantle | `AWS_BEARER_TOKEN_BEDROCK`, or `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | `openai.gpt-5.6-terra` | Responses (GPT) / Messages (Claude) |
 
 The OpenAI provider also supports compatible services such as OpenRouter,
-Groq, Together, DeepSeek, Mistral, Ollama, vLLM, and LM Studio.
+Requesty, Groq, Together, DeepSeek, Mistral, Ollama, vLLM, and LM Studio.
+`PGBOT_AI_PROVIDER=requesty` with `REQUESTY_API_KEY` points it at
+`https://router.requesty.ai/v1`; set `PGBOT_AI_MODEL` to any Requesty model id
+(for example `openai/gpt-4o-mini`), and `PGBOT_AI_BASE_URL` to
+`https://router.eu.requesty.ai/v1` to keep requests in the EU.
 
 ```
 export OPENAI_API_KEY=…
@@ -816,20 +826,21 @@ All from SQL — connections, cache-hit ratio, TPS and rollback ratio, WAL and I
 rates, checkpoints, locks and blocking chains, replication lag, replication-slot
 WAL retention and logical-subscription health, top queries
 (`pg_stat_statements`), table/index sizes, dead tuples and vacuum activity,
-unused and missing indexes, and non-default settings. Counters
+unused and missing indexes, non-default settings, collation version drift
+(PG15+), and published tables with no replica identity. Counters
 (`pg_stat_database`, `pg_stat_wal`, IO) are **double-sampled** to produce live
 rates; the rest are point-in-time reads trended against the baseline.
 
 ## The `--json` contract
 
 `--json` (and `--format=json`) is the interface to build on — a versioned,
-PII-free document (`schema_version`, currently `1.2.0`) whose machine-checkable
+PII-free document (`schema_version`, currently `1.5.0`) whose machine-checkable
 JSON Schema is published in [`schema/`](schema/). Every section carries an
 `exactness` label — `sampled`, `cumulative`, `scraped`, or `unavailable` — so a
 consumer never mistakes a cumulative total for a live rate.
 
 Versioning policy: additive fields bump the minor version and are not breaking —
-a `1.1.0` consumer parses `1.2.0` output unchanged; breaking changes to the
+a `1.4.0` consumer parses `1.5.0` output unchanged; breaking changes to the
 contract are treated as breaking changes to the tool. `pgbot advise --json` has
 its own schema
 ([`schema/pgbot-advise-1.0.0.json`](schema/pgbot-advise-1.0.0.json)).
@@ -1094,7 +1105,8 @@ pgbot inspect "$DATABASE_URL" --format=prometheus > /var/lib/node_exporter/pgbot
 mv /var/lib/node_exporter/pgbot.prom.$$ /var/lib/node_exporter/pgbot.prom   # atomic
 ```
 
-Under `--all-databases`, each database's series carry a `database="…"` label.
+Under `--all-databases`, each database's series carry a `database="…"` label;
+under `--all-instances`, `instance="…"` and `role="writer|reader"` as well.
 
 ## The findings catalogue
 

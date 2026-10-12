@@ -21,7 +21,7 @@ var version = "dev"
 
 func main() {
 	// A SIGINT/SIGTERM cancels the run's context instead of killing the process
-	// mid-flight: collectors abort at the next round trip, the pgx pool closes,
+	// mid-flight: collectors abort at the next round trip, the connection pool closes,
 	// and the store finishes its write. cmd.Context() in every handler is this ctx.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/pgrundev/pggo"
 )
 
 // Self-exclusion must key on backend PID, not the 'pgbot' application_name: a
@@ -32,16 +32,16 @@ func TestIntegration_excludeSelf_byPIDNotLabel(t *testing.T) {
 	}
 
 	// An impostor: an external connection labelled application_name='pgbot'.
-	cfg, err := pgx.ParseConfig(d)
+	cfg, err := pggo.ParseConfig(d)
 	if err != nil {
 		t.Fatalf("parse dsn: %v", err)
 	}
 	cfg.RuntimeParams["application_name"] = "pgbot"
-	imp, err := pgx.ConnectConfig(ctx, cfg)
+	imp, err := pggo.ConnectConfig(ctx, cfg)
 	if err != nil {
 		t.Fatalf("impostor connect: %v", err)
 	}
-	defer imp.Close(ctx)
+	defer imp.Close()
 	var impPID uint32
 	if err := imp.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&impPID); err != nil {
 		t.Fatalf("impostor pid: %v", err)

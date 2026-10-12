@@ -89,6 +89,60 @@ func TestServe_handshakeListAndCall(t *testing.T) {
 	}
 }
 
+func TestServe_initializeNegotiatesSupportedProtocols(t *testing.T) {
+	tests := []struct {
+		name      string
+		requested string
+		want      string
+	}{
+		{name: "2024-11-05", requested: "2024-11-05", want: "2024-11-05"},
+		{name: "2025-03-26", requested: "2025-03-26", want: "2025-03-26"},
+		{name: "2025-06-18", requested: "2025-06-18", want: "2025-06-18"},
+		{name: "2025-11-25", requested: "2025-11-25", want: "2025-11-25"},
+		{name: "unknown", requested: "2099-01-01", want: defaultProtocol},
+		{name: "modern lifecycle not implemented", requested: "2026-07-28", want: defaultProtocol},
+		{name: "malformed revision", requested: "not-a-protocol", want: defaultProtocol},
+		{name: "empty revision", requested: "", want: defaultProtocol},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			in := strings.Join([]string{
+				`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"` + tt.requested + `"}}`,
+				`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo","arguments":{"x":1}}}`,
+			}, "\n") + "\n"
+			var out bytes.Buffer
+			if err := testServer().Serve(context.Background(), strings.NewReader(in), &out); err != nil {
+				t.Fatal(err)
+			}
+			msgs := decode(t, out.String())
+			if got := msgs[0]["result"].(map[string]any)["protocolVersion"]; got != tt.want {
+				t.Fatalf("protocolVersion = %v, want %s", got, tt.want)
+			}
+			if got := msgs[1]["result"].(map[string]any)["isError"]; got == true {
+				t.Fatal("ordinary tool call failed after initialization")
+			}
+		})
+	}
+}
+
+func TestServe_initializeMalformedParamsPreservesFallback(t *testing.T) {
+	in := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":"malformed"}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`,
+	}, "\n") + "\n"
+	var out bytes.Buffer
+	if err := testServer().Serve(context.Background(), strings.NewReader(in), &out); err != nil {
+		t.Fatal(err)
+	}
+	msgs := decode(t, out.String())
+	if got := msgs[0]["result"].(map[string]any)["protocolVersion"]; got != defaultProtocol {
+		t.Fatalf("protocolVersion = %v, want fallback %s", got, defaultProtocol)
+	}
+	if got := len(msgs[1]["result"].(map[string]any)["tools"].([]any)); got != 1 {
+		t.Fatalf("tools/list returned %d tools, want 1", got)
+	}
+}
+
 func TestServe_promptsAndResources(t *testing.T) {
 	srv := &Server{
 		Name: "pgbot", Version: "test",

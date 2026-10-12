@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/pgrundev/pgbot/internal/collect"
 	"github.com/pgrundev/pgbot/internal/conn"
 	"github.com/pgrundev/pgbot/internal/correlate"
 	"github.com/pgrundev/pgbot/internal/model"
+	"github.com/pgrundev/pggo"
 )
 
 // TestIntegration_indexCorrelation exercises the new index attributes (method,
@@ -26,15 +26,15 @@ func TestIntegration_indexCorrelation(t *testing.T) {
 		t.Skip("set PGBOT_TEST_SUPERUSER_DSN (a superuser DSN) to run the index-correlation test")
 	}
 	ctx := context.Background()
-	admin, err := pgx.Connect(ctx, d)
+	admin, err := pggo.Connect(ctx, d)
 	if err != nil {
 		t.Fatalf("admin connect: %v", err)
 	}
-	defer admin.Close(ctx)
+	defer admin.Close()
 
 	// A table big enough that its indexes cross pgbot's 16 KB collector floor, with
 	// one of each shape the classifier distinguishes.
-	if _, err := admin.Exec(ctx, `
+	if _, err := admin.SimpleQuery(ctx, `
 		DROP TABLE IF EXISTS public.corr_job, public.corr_ri;
 		CREATE TABLE public.corr_job (id bigint primary key, "externalIdNormalized" text, tags jsonb, status text, customer_id bigint);
 		INSERT INTO public.corr_job
