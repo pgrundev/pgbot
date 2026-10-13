@@ -5,6 +5,7 @@
 package erd
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"sort"
 	"strings"
@@ -41,8 +42,10 @@ type DBInfo struct {
 }
 
 type Edge struct {
+	FromSchema string
 	FromTable  string // the referencing (child) table
 	FromColumn string
+	ToSchema   string
 	ToTable    string // the referenced (parent) table
 	ToColumn   string
 }
@@ -100,36 +103,27 @@ func RenderASCII(s Schema, color bool) string {
 	// Render boxes to lines, remembering each table's title row and each FK
 	// column's row.
 	var lines []string
-	titleRow := map[string]int{}
+	titleRow := map[tableIdentity]int{}
+	columnRow := map[columnIdentity]int{}
 	type conn struct{ childRow, parentRow int }
 	var conns []conn
-	var fkRows []struct {
-		row    int
-		target string // parent table name
-	}
 	for _, t := range tables {
-		titleRow[t.Name] = len(lines)
+		id := identityOf(t)
+		titleRow[id] = len(lines)
 		var box strings.Builder
 		writeTableBox(&box, t)
 		boxLines := strings.Split(strings.TrimRight(box.String(), "\n"), "\n")
 		for i, c := range t.Columns {
-			if c.FKTarget != "" {
-				parent := c.FKTarget
-				if dot := strings.IndexByte(parent, '.'); dot > 0 {
-					parent = parent[:dot]
-				}
-				fkRows = append(fkRows, struct {
-					row    int
-					target string
-				}{len(lines) + 1 + i, parent})
-			}
+			columnRow[columnIdentity{Table: id, Column: c.Name}] = len(lines) + 1 + i
 		}
 		lines = append(lines, boxLines...)
 		lines = append(lines, "")
 	}
-	for _, fk := range fkRows {
-		if pr, ok := titleRow[fk.target]; ok {
-			conns = append(conns, conn{childRow: fk.row, parentRow: pr})
+	for _, e := range resolveEdges(tables, s.Edges) {
+		child, childOK := columnRow[columnIdentity{Table: e.From, Column: e.Edge.FromColumn}]
+		parent, parentOK := titleRow[e.To]
+		if childOK && parentOK {
+			conns = append(conns, conn{childRow: child, parentRow: parent})
 		}
 	}
 
@@ -244,6 +238,171 @@ func maxInt(a, b int) int {
 	return b
 }
 
+type tableIdentity struct {
+	Schema string
+	Name   string
+}
+
+type columnIdentity struct {
+	Table  tableIdentity
+	Column string
+}
+
+type resolvedEdge struct {
+	Edge        Edge
+	From        tableIdentity
+	To          tableIdentity
+	FromPresent bool
+	ToPresent   bool
+}
+
+func identityOf(t Table) tableIdentity {
+	return tableIdentity{Schema: t.Schema, Name: t.Name}
+}
+
+func lessIdentity(a, b tableIdentity) bool {
+	if a.Schema != b.Schema {
+		return a.Schema < b.Schema
+	}
+	return a.Name < b.Name
+}
+
+func resolveTableIdentity(tables []Table, schema, name string) (tableIdentity, bool, bool) {
+	var match tableIdentity
+	matches := 0
+	for _, table := range tables {
+		if table.Name != name || (schema != "" && table.Schema != schema) {
+			continue
+		}
+		match = identityOf(table)
+		matches++
+	}
+	if matches == 1 {
+		return match, true, true
+	}
+	if matches > 1 {
+		return tableIdentity{}, false, false
+	}
+	return tableIdentity{Schema: schema, Name: name}, false, true
+}
+
+func resolveEdges(tables []Table, edges []Edge) []resolvedEdge {
+	resolved := make([]resolvedEdge, 0, len(edges))
+	for _, edge := range edges {
+		from, fromPresent, fromOK := resolveTableIdentity(tables, edge.FromSchema, edge.FromTable)
+		to, toPresent, toOK := resolveTableIdentity(tables, edge.ToSchema, edge.ToTable)
+		if fromOK && toOK {
+			resolved = append(resolved, resolvedEdge{
+				Edge: edge, From: from, To: to,
+				FromPresent: fromPresent, ToPresent: toPresent,
+			})
+		}
+	}
+	sort.Slice(resolved, func(i, j int) bool {
+		if resolved[i].To != resolved[j].To {
+			return lessIdentity(resolved[i].To, resolved[j].To)
+		}
+		if resolved[i].From != resolved[j].From {
+			return lessIdentity(resolved[i].From, resolved[j].From)
+		}
+		if resolved[i].Edge.FromColumn != resolved[j].Edge.FromColumn {
+			return resolved[i].Edge.FromColumn < resolved[j].Edge.FromColumn
+		}
+		return resolved[i].Edge.ToColumn < resolved[j].Edge.ToColumn
+	})
+	return resolved
+}
+
+func drawableEdges(edges []resolvedEdge) []resolvedEdge {
+	drawable := make([]resolvedEdge, 0, len(edges))
+	for _, edge := range edges {
+		if edge.FromPresent && edge.ToPresent {
+			drawable = append(drawable, edge)
+		}
+	}
+	return drawable
+}
+
+func simpleIdentifier(s string) bool {
+	if s == "" || !((s[0] >= 'a' && s[0] <= 'z') || s[0] == '_') {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		c := s[i]
+		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '$') {
+			return false
+		}
+	}
+	return true
+}
+
+func displayIdentifier(s string) string {
+	if simpleIdentifier(s) {
+		return s
+	}
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
+}
+
+func qualifiedTableName(id tableIdentity) string {
+	if id.Schema == "" {
+		return displayIdentifier(id.Name)
+	}
+	return displayIdentifier(id.Schema) + "." + displayIdentifier(id.Name)
+}
+
+func duplicateIdentityNames(tables []Table, edges []resolvedEdge) map[string]bool {
+	identities := map[tableIdentity]bool{}
+	for _, table := range tables {
+		identities[identityOf(table)] = true
+	}
+	for _, edge := range edges {
+		identities[edge.From] = true
+		identities[edge.To] = true
+	}
+	counts := map[string]int{}
+	for id := range identities {
+		counts[id.Name]++
+	}
+	duplicates := map[string]bool{}
+	for name, count := range counts {
+		duplicates[name] = count > 1
+	}
+	return duplicates
+}
+
+func forestTableName(id tableIdentity, duplicates map[string]bool, present bool) string {
+	if duplicates[id.Name] || (!present && id.Schema != "") {
+		return qualifiedTableName(id)
+	}
+	return id.Name
+}
+
+func mermaidEntityID(id tableIdentity) string {
+	payload := fmt.Sprintf("%d:%s%d:%s", len(id.Schema), id.Schema, len(id.Name), id.Name)
+	sum := sha256.Sum256([]byte(payload))
+	return fmt.Sprintf("table_%x", sum)
+}
+
+func mermaidSafeEntityName(name string) bool {
+	if !simpleIdentifier(name) || strings.Contains(name, "$") {
+		return false
+	}
+	switch strings.ToLower(name) {
+	case "class", "classdef", "direction", "end", "erdiagram", "many", "one", "only", "style", "subgraph", "to", "u", "zero":
+		return false
+	}
+	return true
+}
+
+func mermaidText(s string) string {
+	return strings.NewReplacer(
+		"#", "#35;",
+		`"`, "#quot;",
+		"\r", "#13;",
+		"\n", "#10;",
+	).Replace(s)
+}
+
 // writeTableBox renders one table:
 //
 //	┌─ public.orders ───────────────────┐
@@ -278,7 +437,7 @@ func writeTableBox(b *strings.Builder, t Table) {
 		}
 		idxRows = append(idxRows, row)
 	}
-	title := t.Schema + "." + t.Name
+	title := qualifiedTableName(identityOf(t))
 	inner := len(title) + 4
 	for _, r := range append(append([]string(nil), rows...), idxRows...) {
 		inner = max(inner, len(r)+2)
@@ -305,40 +464,39 @@ func writeTableBox(b *strings.Builder, t Table) {
 // Each child appears once, under its first (alphabetical) parent; additional
 // parents show as a cross-link. Cycle-safe via a visited set.
 func writeForest(b *strings.Builder, s Schema) {
-	if len(s.Edges) == 0 {
+	edges := resolveEdges(s.Tables, s.Edges)
+	if len(edges) == 0 {
 		return
 	}
 	b.WriteString("Relationships\n")
 
-	children := map[string][]Edge{} // parent → edges into it
-	firstParent := map[string]string{}
-	hasParent := map[string]bool{}
-	edges := append([]Edge(nil), s.Edges...)
-	sort.Slice(edges, func(i, j int) bool {
-		if edges[i].ToTable != edges[j].ToTable {
-			return edges[i].ToTable < edges[j].ToTable
-		}
-		return edges[i].FromTable < edges[j].FromTable
-	})
+	children := map[tableIdentity][]resolvedEdge{} // parent → edges into it
+	firstParent := map[tableIdentity]tableIdentity{}
+	hasParent := map[tableIdentity]bool{}
 	for _, e := range edges {
-		children[e.ToTable] = append(children[e.ToTable], e)
-		hasParent[e.FromTable] = true
-		if _, ok := firstParent[e.FromTable]; !ok {
-			firstParent[e.FromTable] = e.ToTable
+		children[e.To] = append(children[e.To], e)
+		hasParent[e.From] = true
+		if _, ok := firstParent[e.From]; !ok {
+			firstParent[e.From] = e.To
 		}
 	}
+	duplicates := duplicateIdentityNames(s.Tables, edges)
+	present := map[tableIdentity]bool{}
+	for _, table := range s.Tables {
+		present[identityOf(table)] = true
+	}
 
-	var roots []string
+	var roots []tableIdentity
 	for parent := range children {
 		if !hasParent[parent] {
 			roots = append(roots, parent)
 		}
 	}
-	sort.Strings(roots)
+	sort.Slice(roots, func(i, j int) bool { return lessIdentity(roots[i], roots[j]) })
 
-	visited := map[string]bool{}
-	var walk func(table, indent string)
-	walk = func(table, indent string) {
+	visited := map[tableIdentity]bool{}
+	var walk func(table tableIdentity, indent string)
+	walk = func(table tableIdentity, indent string) {
 		if visited[table] {
 			return
 		}
@@ -351,30 +509,30 @@ func writeForest(b *strings.Builder, s Schema) {
 				branch = "└─<"
 				childIndent = indent + "    "
 			}
-			line := fmt.Sprintf("%s%s %s (%s)", indent, branch, e.FromTable, e.FromColumn)
-			if firstParent[e.FromTable] != table {
+			line := fmt.Sprintf("%s%s %s (%s)", indent, branch, forestTableName(e.From, duplicates, present[e.From]), e.Edge.FromColumn)
+			if firstParent[e.From] != table {
 				line += "  · also above"
 				fmt.Fprintln(b, line)
 				continue
 			}
 			fmt.Fprintln(b, line)
-			walk(e.FromTable, childIndent)
+			walk(e.From, childIndent)
 		}
 	}
 	for _, r := range roots {
-		fmt.Fprintln(b, r)
+		fmt.Fprintln(b, forestTableName(r, duplicates, present[r]))
 		walk(r, " ")
 	}
 	// Cycles (every member has a parent) still deserve printing.
-	var leftovers []string
+	var leftovers []tableIdentity
 	for parent := range children {
 		if !visited[parent] {
 			leftovers = append(leftovers, parent)
 		}
 	}
-	sort.Strings(leftovers)
+	sort.Slice(leftovers, func(i, j int) bool { return lessIdentity(leftovers[i], leftovers[j]) })
 	for _, r := range leftovers {
-		fmt.Fprintln(b, r+"  (cycle)")
+		fmt.Fprintln(b, forestTableName(r, duplicates, present[r])+"  (cycle)")
 		walk(r, " ")
 	}
 }
@@ -384,20 +542,57 @@ func writeForest(b *strings.Builder, s Schema) {
 func RenderMermaid(s Schema) string {
 	var b strings.Builder
 	b.WriteString("erDiagram\n")
-	edges := append([]Edge(nil), s.Edges...)
-	sort.Slice(edges, func(i, j int) bool {
-		if edges[i].ToTable != edges[j].ToTable {
-			return edges[i].ToTable < edges[j].ToTable
-		}
-		return edges[i].FromTable < edges[j].FromTable
-	})
-	for _, e := range edges {
-		fmt.Fprintf(&b, "    %s ||--o{ %s : %s\n", e.ToTable, e.FromTable, e.FromColumn)
-	}
 	tables := append([]Table(nil), s.Tables...)
-	sort.Slice(tables, func(i, j int) bool { return tables[i].Name < tables[j].Name })
+	sort.Slice(tables, func(i, j int) bool { return lessIdentity(identityOf(tables[i]), identityOf(tables[j])) })
+	edges := resolveEdges(tables, s.Edges)
+	duplicates := duplicateIdentityNames(tables, edges)
+	present := map[tableIdentity]bool{}
+	identities := map[tableIdentity]bool{}
+	forceAlias := map[tableIdentity]bool{}
+	for _, table := range tables {
+		id := identityOf(table)
+		present[id] = true
+		identities[id] = true
+	}
+	for _, edge := range edges {
+		identities[edge.From] = true
+		identities[edge.To] = true
+		forceAlias[edge.From] = forceAlias[edge.From] || (!edge.FromPresent && edge.From.Schema != "")
+		forceAlias[edge.To] = forceAlias[edge.To] || (!edge.ToPresent && edge.To.Schema != "")
+	}
+	orderedIdentities := make([]tableIdentity, 0, len(identities))
+	for id := range identities {
+		orderedIdentities = append(orderedIdentities, id)
+	}
+	sort.Slice(orderedIdentities, func(i, j int) bool { return lessIdentity(orderedIdentities[i], orderedIdentities[j]) })
+
+	tableNames := map[tableIdentity]string{}
+	declarations := map[tableIdentity]string{}
+	usedNames := map[string]bool{}
+	for _, id := range orderedIdentities {
+		aliased := duplicates[id.Name] || !mermaidSafeEntityName(id.Name) || forceAlias[id]
+		name := id.Name
+		if aliased {
+			name = mermaidEntityID(id)
+		}
+		if usedNames[name] {
+			aliased = true
+			base := mermaidEntityID(id)
+			name = base
+			for suffix := 2; usedNames[name]; suffix++ {
+				name = fmt.Sprintf("%s_%d", base, suffix)
+			}
+		}
+		usedNames[name] = true
+		tableNames[id] = name
+		declarations[id] = name
+		if aliased {
+			declarations[id] += `["` + mermaidText(qualifiedTableName(id)) + `"]`
+		}
+	}
 	for _, t := range tables {
-		fmt.Fprintf(&b, "    %s {\n", t.Name)
+		id := identityOf(t)
+		fmt.Fprintf(&b, "    %s {\n", declarations[id])
 		for _, c := range t.Columns {
 			marker := ""
 			switch {
@@ -413,6 +608,14 @@ func RenderMermaid(s Schema) string {
 			fmt.Fprintf(&b, "        %s %s%s\n", typ, c.Name, marker)
 		}
 		b.WriteString("    }\n")
+	}
+	for _, id := range orderedIdentities {
+		if !present[id] && declarations[id] != tableNames[id] {
+			fmt.Fprintf(&b, "    %s\n", declarations[id])
+		}
+	}
+	for _, e := range edges {
+		fmt.Fprintf(&b, "    %s ||--o{ %s : %s\n", tableNames[e.To], tableNames[e.From], e.Edge.FromColumn)
 	}
 	return b.String()
 }

@@ -62,15 +62,15 @@ func Introspect(ctx context.Context, q Querier, schemaFilter string) (Schema, er
 		Schema, Table, Column, Type string
 		PK                          bool
 	}
-	byTable := map[string]*Table{}
-	var order []string
+	byTable := map[tableIdentity]*Table{}
+	var order []tableIdentity
 	for rows.Next() {
 		var r colRow
 		if err := rows.Scan(&r.Schema, &r.Table, &r.Column, &r.Type, &r.PK); err != nil {
 			rows.Close()
 			return s, err
 		}
-		key := r.Schema + "." + r.Table
+		key := tableIdentity{Schema: r.Schema, Name: r.Table}
 		t := byTable[key]
 		if t == nil {
 			t = &Table{Schema: r.Schema, Name: r.Table}
@@ -89,16 +89,28 @@ func Introspect(ctx context.Context, q Querier, schemaFilter string) (Schema, er
 		return s, fmt.Errorf("introspect foreign keys: %w", err)
 	}
 	defer rows.Close()
+	nameCounts := map[string]int{}
+	for id := range byTable {
+		nameCounts[id.Name]++
+	}
 	for rows.Next() {
 		var fs, ft, fc, ts, tt, tc string
 		if err := rows.Scan(&fs, &ft, &fc, &ts, &tt, &tc); err != nil {
 			return s, err
 		}
-		s.Edges = append(s.Edges, Edge{FromTable: ft, FromColumn: fc, ToTable: tt, ToColumn: tc})
-		if t := byTable[fs+"."+ft]; t != nil {
+		s.Edges = append(s.Edges, Edge{
+			FromSchema: fs, FromTable: ft, FromColumn: fc,
+			ToSchema: ts, ToTable: tt, ToColumn: tc,
+		})
+		if t := byTable[tableIdentity{Schema: fs, Name: ft}]; t != nil {
 			for i := range t.Columns {
 				if t.Columns[i].Name == fc {
-					t.Columns[i].FKTarget = tt + "." + tc
+					targetID := tableIdentity{Schema: ts, Name: tt}
+					target := displayIdentifier(tt)
+					if nameCounts[tt] != 1 || byTable[targetID] == nil {
+						target = qualifiedTableName(targetID)
+					}
+					t.Columns[i].FKTarget = target + "." + displayIdentifier(tc)
 				}
 			}
 		}
@@ -134,9 +146,9 @@ ORDER BY 1, 2, 3`
 // introspectExtras fills indexes and the database header info; both are
 // best-effort decoration — an error leaves the structural diagram intact.
 func introspectExtras(ctx context.Context, q Querier, schemaFilter string, s *Schema) {
-	byKey := map[string]*Table{}
+	byKey := map[tableIdentity]*Table{}
 	for i := range s.Tables {
-		byKey[s.Tables[i].Schema+"."+s.Tables[i].Name] = &s.Tables[i]
+		byKey[identityOf(s.Tables[i])] = &s.Tables[i]
 	}
 	if rows, err := q.Query(ctx, indexesSQL, schemaFilter); err == nil {
 		for rows.Next() {
@@ -145,7 +157,7 @@ func introspectExtras(ctx context.Context, q Querier, schemaFilter string, s *Sc
 			if rows.Scan(&sch, &tbl, &name, &def, &uniq) != nil {
 				break
 			}
-			if t := byKey[sch+"."+tbl]; t != nil {
+			if t := byKey[tableIdentity{Schema: sch, Name: tbl}]; t != nil {
 				t.Indexes = append(t.Indexes, Index{Name: name, Def: def, Unique: uniq})
 			}
 		}
