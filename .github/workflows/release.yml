@@ -41,6 +41,9 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Container image goes to the releasing repo's own ghcr namespace, so a
+          # fork's release doesn't try (and fail) to push to ghcr.io/pgrundev.
+          IMAGE_REPO: ghcr.io/${{ github.repository }}
           # Write access to the separate pgrundev/homebrew-tap repo — EITHER the
           # private half of a write deploy key on that repo (preferred) OR a
           # fine-grained PAT scoped to it (Contents: write). Both are passed (empty
@@ -116,6 +119,9 @@ jobs:
   brew-smoke:
     needs: goreleaser
     name: brew install pgrundev/tap/pgbot
+    # The tap is pgrundev's; a fork has no credential for it by design, so the
+    # loud "formula NOT published" failure below is only meaningful upstream.
+    if: github.repository == 'pgrundev/pgbot'
     runs-on: macos-latest
     env:
       HAS_TAP_CRED: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY != '' || secrets.HOMEBREW_TAP_TOKEN != '' }}
@@ -153,8 +159,9 @@ jobs:
       - name: anonymous docker run --version
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
+          IMAGE="ghcr.io/$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
           docker logout ghcr.io || true   # ensure the pull is anonymous
-          out="$(docker run --rm ghcr.io/pgrundev/pgbot:"$VERSION" --version)"
+          out="$(docker run --rm "$IMAGE":"$VERSION" --version)"
           echo "$out"
           case "$out" in
             "pgbot version"*) echo "image is public and runs ✓" ;;
@@ -175,11 +182,11 @@ jobs:
       - name: cosign verify-blob --bundle
         run: |
           VERSION="${GITHUB_REF_NAME}"
-          base="https://github.com/pgrundev/pgbot/releases/download/${VERSION}"
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${VERSION}"
           curl -fsSL "$base/checksums.txt" -o checksums.txt
           curl -fsSL "$base/checksums.txt.cosign.bundle" -o checksums.txt.cosign.bundle
           cosign verify-blob --bundle checksums.txt.cosign.bundle \
-            --certificate-identity-regexp '^https://github.com/pgrundev/pgbot/\.github/workflows/release\.yml@' \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@${GITHUB_REF}" \
             --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
             checksums.txt
           echo "published cosign bundle verifies ✓"
