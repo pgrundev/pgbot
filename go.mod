@@ -13,7 +13,7 @@ require (
 	github.com/pgrundev/pggo v0.1.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/crypto v0.57.0
-	golang.org/x/sync v0.23.0
+	golang.org/x/sync v0.24.0
 	golang.org/x/term v0.46.0
 	modernc.org/sqlite v1.58.0
 )
