@@ -250,6 +250,7 @@ Every command takes the connection the same way — an argument, `$DATABASE_URL`
 | `activity` | live sessions right now — PIDs, ages, waits, and what each is running |
 | `report` | the full inspection as one self-contained HTML page (`pgbot report > report.html`) |
 | `advise` | planner-validated missing-index suggestions (needs hypopg) |
+| `sql explain "<SELECT …>"` | one query's plan, read in plain English — plan-only EXPLAIN, never executed (`--ai` for a prose reading) |
 | `ask "…"` · `explain` | a plain-language AI reading of the same deterministic findings |
 | `explain-finding <id>` | the catalogue page for a finding, offline |
 | `mcp` | serve the findings to an AI agent over MCP |
@@ -603,6 +604,9 @@ pgbot tables  <connection-string>   # largest tables + row counts + seq-vs-index
 pgbot vacuum <connection-string>    # autovacuum health per table — dead tuples + whether it's due
 pgbot tune <connection-string>      # config-tuning recommendations from the workload
 pgbot explain <connection-string>   # inspect, then have an AI explain the findings
+pgbot sql explain "SELECT …"        # one query's plan as a tree + plain English ($DATABASE_URL)
+  --json                 the raw EXPLAIN (FORMAT JSON) instead
+  --ai                   append a model's prose reading of the plan
 pgbot ask "why is it slow?"         # AI answer grounded on the findings ($DATABASE_URL)
   --yes                  skip the data-disclosure confirmation prompt
 pgbot mcp                           # run as an MCP server over stdio (for AI agents)
@@ -624,7 +628,8 @@ on stdio, so an AI agent can call pgbot as a read-only tool. It exposes
   your repo; it says what to search for. Also `pgbot indexes --correlate [--json]`.
 - `record_index_verdict` — store what the repo search found, so a later run over a
   longer window carries strengthening evidence (no DB connection needed)
-- `explain_plan` — the planner's plan for a SELECT (plain EXPLAIN, never executed)
+- `explain_plan` — the planner's plan for a SELECT (plain EXPLAIN, never executed),
+  with the same deterministic `observations` that `pgbot sql explain` prints
 - `schema_of` — a table's columns/indexes/constraints + row estimate, **no data**
 - `compare_to_baseline` — the `diff`, with its interval-honesty and reset caveats
 - `why` — the causal chains from stored history (symptom ← mechanism ←
@@ -696,6 +701,63 @@ of which carries the pgbot judgment (caveats intact, impact-first, never writes)
 The plugin drives the `pgbot` binary, so install that first (`curl -fsSL
 https://pgbot.dev/install | sh`); set `DATABASE_URL` or pass a connection string
 per call, then ask *"is my Postgres healthy?"*
+
+### `sql explain` — read a query plan in plain English
+
+```sh
+pgbot sql explain "SELECT c.name, count(*) FROM orders o JOIN customers c ON c.id = o.customer_id
+                   WHERE o.status = $1 GROUP BY c.name ORDER BY 2 DESC"
+cat slow.sql | pgbot sql explain            # the query on stdin
+pgbot sql explain "$DATABASE_URL" "SELECT …" # connection first, then the query
+```
+
+`pgbot sql explain` runs the **plan-only** form of EXPLAIN for one SELECT —
+inside a `READ ONLY` transaction, the query is planned and never executed — and
+renders the plan the way you'd want a colleague to read it to you:
+
+```
+Query plan  ·  estimates only — the query was planned, not executed
+  SELECT c.name, count(*) FROM orders o JOIN customers c ON c.id = o.customer_id …
+
+Sort  cost=562.48..567.48  rows≈2.0K
+    sorts about 2.0K rows by (count(*)) DESC
+  └─ Aggregate (hashed)  cost=432.82..452.82  rows≈2.0K
+         groups by c.name using a hash table; expects about 2.0K rows
+       └─ Hash Join (inner)  cost=135.96..399.49  rows≈6.7K
+              inner join: builds a hash table from one side and probes it with the other
+              Hash Cond: (o.customer_id = c.id)
+            ├─ Bitmap Heap Scan on orders (as o)  cost=79.96..325.96  rows≈6.7K
+            │      fetches the pages of orders marked in a bitmap by the index scan below
+            │      Filter: (amount > '0'::numeric)
+            │    └─ Bitmap Index Scan using orders_status_idx  cost=0.00..78.29  rows≈6.7K
+            │           Index Cond: (status = $1)
+            └─ Hash  cost=31.00..31.00  rows≈2.0K
+                 └─ Seq Scan on customers (as c)  cost=0.00..31.00  rows≈2.0K
+                        reads every row of customers, planner expects about 2.0K rows
+
+What stands out
+  · The scan via orders_status_idx on orders applies (amount > '0'::numeric) after the
+    index lookup, so some rows are fetched and then discarded. …
+
+Costs and row counts are the planner's estimates, not measurements.
+Planned as a generic plan: parameter values ($1, …) were unknown …
+```
+
+Each node gets one plain-English line; **What stands out** lists the shapes
+worth a look — a sequential scan the planner expects to return many rows, a
+nested loop that repeats a scan per outer row, a sort an index could avoid, a
+filter applied after an index lookup — all derived from the planner's estimates,
+offline, with no model involved. `pgbot SQL EXPLAIN …` works too (command names
+are case-insensitive).
+
+- On PostgreSQL 16+ the plan is generic (`EXPLAIN (GENERIC_PLAN)`), so `$1`-style
+  placeholders need no values; older servers plan queries with literal values.
+- Only a **single plain SELECT** is accepted — no writes, no `WITH`, no multiple
+  statements (exit 64 otherwise). pgbot never uses the executing form of EXPLAIN.
+- `--json` prints the raw `EXPLAIN (FORMAT JSON)` output.
+- `--ai` appends a model's prose reading of the same rendered plan, behind the
+  disclosure prompt below. Unlike the findings, **your SQL text can carry literal
+  values**, so the prompt names exactly what is sent: the query and its plan.
 
 ### `explain` — optional AI layer
 

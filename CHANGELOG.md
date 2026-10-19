@@ -7,6 +7,26 @@ separately by `model.SchemaVersion` (currently 1.5.0).
 
 ## [Unreleased]
 
+### Added
+- **`pgbot sql explain "<SELECT …>"` — a query plan, read in plain English.**
+  Runs the plan-only form of EXPLAIN for one SELECT (`GENERIC_PLAN` on
+  PostgreSQL 16+, so `$1` placeholders need no values) inside a `READ ONLY`
+  transaction — the query is never executed — and renders the plan as a tree
+  with a one-line plain-English gloss per node, the planner's cost and row
+  estimates, and a **What stands out** list: sequential scans expected to return
+  many rows, nested loops that repeat a scan per outer row, sorts an index could
+  avoid, filters applied after an index lookup. All of it is deterministic and
+  offline. `--json` prints the raw `EXPLAIN (FORMAT JSON)`; `--ai` appends a
+  model's prose reading of the same rendered plan behind a disclosure prompt
+  that names what is sent (your SQL text and its plan, which unlike findings can
+  carry literal values). The query is the last argument or stdin; the connection
+  is the first argument or `$DATABASE_URL`. Only a single plain SELECT is
+  accepted (exit 64 otherwise). Command names are now matched
+  case-insensitively, so `pgbot SQL EXPLAIN …` reads like the statement it wraps.
+- The MCP `explain_plan` tool now shares the same guarded path and returns the
+  same deterministic `observations` alongside the raw plan, plus `generic_plan`
+  when GENERIC_PLAN was used.
+
 ### Changed
 - **PostgreSQL driver: pgx → [pgGo](https://github.com/pgrundev/pggo).** pgbot
   now talks to PostgreSQL through pgGo, a dependency-free wire-protocol client

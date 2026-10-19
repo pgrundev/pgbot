@@ -136,18 +136,25 @@ func runExplain(cmd *cobra.Command, args []string, f inspectFlags, yes bool) err
 // confirmDisclosure identifies the remote destination before data is sent.
 // Local endpoints do not send findings off the machine and need no confirmation.
 func confirmDisclosure(cmdName string, llm ai.LanguageModel, yes bool) bool {
+	return confirmDisclosureOf(cmdName, "the PII-free findings (same as `inspect --json`)", llm, yes)
+}
+
+// confirmDisclosureOf is confirmDisclosure with the payload named: `sql explain
+// --ai` sends the user's SQL text and its plan, which — unlike the findings —
+// can carry literal values, so the prompt must say exactly that.
+func confirmDisclosureOf(cmdName, payload string, llm ai.LanguageModel, yes bool) bool {
 	if ai.Local(llm.Endpoint()) {
-		fmt.Fprintf(os.Stderr, "%s: using a local model at %s (%s) — the findings do not leave this machine.\n",
-			cmdName, ai.Host(llm.Endpoint()), llm.Model())
+		fmt.Fprintf(os.Stderr, "%s: using a local model at %s (%s) — %s does not leave this machine.\n",
+			cmdName, ai.Host(llm.Endpoint()), llm.Model(), payload)
 		return true
 	}
-	fmt.Fprintf(os.Stderr, "%s: this sends the PII-free findings (same as `inspect --json`) to %s at %s (model %s).\n",
-		cmdName, llm.Provider(), ai.Host(llm.Endpoint()), llm.Model())
+	fmt.Fprintf(os.Stderr, "%s: this sends %s to %s at %s (model %s).\n",
+		cmdName, payload, llm.Provider(), ai.Host(llm.Endpoint()), llm.Model())
 	if strings.HasPrefix(strings.ToLower(llm.Endpoint()), "http://") {
 		// Not local (that returned above), and not TLS: the API key and the
 		// findings cross the network in the clear. Say so; it is usually a LAN
 		// address copied from a "local model" recipe.
-		fmt.Fprintf(os.Stderr, "%s: WARNING — %s is plain http, so the key and the findings travel unencrypted.\n",
+		fmt.Fprintf(os.Stderr, "%s: WARNING — %s is plain http, so the key and the payload travel unencrypted.\n",
 			cmdName, ai.Host(llm.Endpoint()))
 	}
 	if yes || !isInteractive() {

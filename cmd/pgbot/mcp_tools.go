@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/pgrundev/pgbot/docs"
-	"github.com/pgrundev/pgbot/internal/advisor"
 	"github.com/pgrundev/pgbot/internal/conn"
+	"github.com/pgrundev/pgbot/internal/plan"
 	"github.com/pgrundev/pgbot/internal/store"
 	"github.com/pgrundev/pggo"
 )
@@ -22,8 +22,9 @@ import (
 // — a third-party client can still reword or drop it on its side.
 
 // explainPlanTool runs a PLAIN EXPLAIN (the plan-only form) of an agent-supplied query
-// through the same guard as the advisor: SanitizeSelect (single plain SELECT, no
-// semicolons) plus a READ ONLY transaction. The query is planned, never executed.
+// through plan.Fetch — the same guarded path as `pgbot sql explain`: SanitizeSelect
+// (single plain SELECT, no semicolons) plus a READ ONLY transaction. The query is
+// planned, never executed.
 func explainPlanTool(ctx context.Context, args json.RawMessage) (string, error) {
 	var a struct {
 		ConnectionString string `json:"connection_string"`
@@ -33,9 +34,8 @@ func explainPlanTool(ctx context.Context, args json.RawMessage) (string, error) 
 	if strings.TrimSpace(a.Query) == "" {
 		return "", fmt.Errorf("query is required")
 	}
-	clean := advisor.SanitizeSelect(a.Query)
-	if clean == "" {
-		return "", fmt.Errorf("only a single plain SELECT can be explained — no writes, no multiple statements, no utility statements")
+	if _, err := plan.Prepare(a.Query, 160000); err != nil {
+		return "", err
 	}
 	dsn, err := dsnFromArgs(args)
 	if err != nil {
@@ -49,35 +49,26 @@ func explainPlanTool(ctx context.Context, args json.RawMessage) (string, error) 
 	}
 	defer target.Close()
 
-	// GENERIC_PLAN (PG16+) plans a query with $N placeholders without values;
-	// below 16, plain EXPLAIN works for a query with literal values and errors
-	// clearly on one with placeholders.
-	stmt := "EXPLAIN (FORMAT JSON) " + clean
-	if target.Caps.VersionNum >= 160000 {
-		stmt = "EXPLAIN (GENERIC_PLAN, FORMAT JSON) " + clean
-	}
-	var planJSON []byte
-	err = target.ReadOnlyTx(ctx, func(tx *pggo.Tx) error {
-		res, e := tx.Conn().SimpleQuery(ctx, stmt)
-		if e != nil {
-			return e
-		}
-		for _, r := range res {
-			if len(r.Rows) > 0 && len(r.Rows[0]) > 0 {
-				planJSON = r.Rows[0][0]
-				return nil
-			}
-		}
-		return fmt.Errorf("no plan returned")
-	})
+	planJSON, generic, err := plan.Fetch(ctx, target, a.Query)
 	if err != nil {
-		return "", fmt.Errorf("explain: %s", conn.RedactConnString(err.Error()))
+		return "", err
 	}
-	return marshal(map[string]any{
+	out := map[string]any{
 		"plan":      json.RawMessage(planJSON),
 		"exactness": "estimate",
 		"note":      "plain EXPLAIN — the query was planned, NOT executed. Costs and row counts are the planner's ESTIMATES, not measurements; state them as such.",
-	})
+	}
+	if root, perr := plan.Parse(planJSON); perr == nil {
+		var obs []map[string]string
+		for _, o := range plan.Observe(root) {
+			obs = append(obs, map[string]string{"level": o.Level, "text": o.Text})
+		}
+		out["observations"] = obs
+	}
+	if generic {
+		out["generic_plan"] = true
+	}
+	return marshal(out)
 }
 
 // compareToBaselineTool is `pgbot diff` as a tool: it reads the local baseline

@@ -29,6 +29,11 @@ func main() {
 	// way out rather than per-Target (--all-databases and `mcp` open many).
 	defer conn.CloseSSHTunnel()
 
+	// `pgbot SQL EXPLAIN ...` reads like the statement it wraps; cobra matches
+	// command names case-insensitively when this is set, so no two spellings need
+	// separate commands. No two pgbot commands differ only by case.
+	cobra.EnableCaseInsensitive = true
+
 	root := &cobra.Command{
 		Use:           "pgbot",
 		Short:         "In-database observability for PostgreSQL",
@@ -59,6 +64,7 @@ func main() {
 	root.AddCommand(newERDCmd())
 	root.AddCommand(newActivityCmd())
 	root.AddCommand(newReportCmd())
+	root.AddCommand(newSQLCmd())
 
 	// --ssh-tunnel is global: every command that takes a connection can need it,
 	// and it changes only HOW the DSN is reached, never what is inspected.
