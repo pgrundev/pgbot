@@ -19,11 +19,14 @@ related: [long_running_transaction, vacuum_horizon_blocked]
 At least one session was in state **`idle in transaction`** when pgbot sampled
 `pg_stat_activity` (`c.Activity.IdleInTransaction > 0`) — it has an open
 transaction but is running no statement, waiting on the client. The finding starts
-at `info`; it **escalates to `warn` once the longest open transaction reaches
-`idleInTxnWarnSec` = 60 seconds**. The impact score grows with both the count and
-the age of the oldest one: `min(80, 50 + longestXactSec÷30)` in the escalated case
-(baseline `30`), so a handful of minute-old idle transactions weighs far more than a
-single one a second old.
+at `info`; it **escalates to `warn` once the oldest idle-in-transaction session reaches
+`idleInTxnWarnSec` = 60 seconds**. The impact score grows with
+the age of the oldest idle transaction: `min(80, 50 + longestIdleXactSec÷30)` in the escalated case
+(baseline `30`). Ages from active sessions do not escalate this finding;
+`LongestXactSec` still describes the oldest transaction of any state and drives
+`long_running_transaction` separately. Older stored snapshots without an
+idle-specific age retain the baseline `info` finding and report that the idle
+transaction age was not measured.
 
 ## Why it matters
 
@@ -51,7 +54,7 @@ ORDER BY xact_start;
 ```
 
 The row count is pgbot's `IdleInTransaction`; the largest `xact_age` is the
-`LongestXactSec` that drives the escalation to `warn`. `idle in transaction
+`LongestIdleXactSec` that drives the escalation to `warn`. `idle in transaction
 (aborted)` is the same hazard after an error left the transaction unrollbacked — it
 still holds its snapshot.
 
