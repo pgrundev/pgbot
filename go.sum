@@ -56,8 +56,8 @@ github.com/owenrumney/go-sarif/v2 v2.3.3 h1:ubWDJcF5i3L/EIOER+ZyQ03IfplbSU1BLOE2
 github.com/owenrumney/go-sarif/v2 v2.3.3/go.mod h1:MSqMMx9WqlBSY7pXoOZWgEsVB4FDNfhcaXDA1j6Sr+w=
 github.com/pb33f/ordered-map/v2 v2.3.1 h1:5319HDO0aw4DA4gzi+zv4FXU9UlSs3xGZ40wcP1nBjY=
 github.com/pb33f/ordered-map/v2 v2.3.1/go.mod h1:qxFQgd0PkVUtOMCkTapqotNgzRhMPL7VvaHKbd1HnmQ=
-github.com/pgrundev/pggo v0.1.0 h1:SORSc6h+sq6k2qSrk7YFghShgb60fsuIIyL9/2u4PTU=
-github.com/pgrundev/pggo v0.1.0/go.mod h1:PqAWvEdWAMoePDrIR3D8jnBm+zy56/kEK4TDzNRDEJo=
+github.com/pgrundev/pggo v0.1.1 h1:kOuWiSktbFHA9UyF0FtjX8oU+r1Hm/7oEIu/wp22UFA=
+github.com/pgrundev/pggo v0.1.1/go.mod h1:PqAWvEdWAMoePDrIR3D8jnBm+zy56/kEK4TDzNRDEJo=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE=
