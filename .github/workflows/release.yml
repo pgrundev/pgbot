@@ -25,7 +25,7 @@ jobs:
       # syft: goreleaser's sboms block. qemu: emulation for the linux/arm64
       # image build. buildx: goreleaser's docker build. (Prose stays off the
       # version comments — dependabot only rewrites a trailing "# vX.Y.Z".)
-      - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+      - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       # Log in so goreleaser can push the ghcr.io image; without this the docker
