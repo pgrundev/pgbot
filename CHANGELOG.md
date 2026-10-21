@@ -7,6 +7,13 @@ separately by `model.SchemaVersion` (currently 1.5.0).
 
 ## [Unreleased]
 
+### Added
+- **Cheaper Inference as an `explain` / `ask` provider.**
+  `PGBOT_AI_PROVIDER=cheaperinference` sends `/chat/completions` to
+  `https://api.cheaperinference.com/v1` with `CHEAPER_INFERENCE_API_KEY` (or
+  `PGBOT_AI_API_KEY`), the same way the `requesty` and `opper` aliases work. It
+  is never auto-detected, and it never picks up an OpenAI or OpenRouter key.
+
 ## [0.9.0] - 2026-10-18
 
 ### Added

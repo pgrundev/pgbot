@@ -469,6 +469,7 @@ one SSH connection serves the whole run. Raise `--timeout` if the link is slow.
 | `OPENAI_API_KEY` / `OPENROUTER_API_KEY` | Enables `ask` / `explain` via OpenAI or OpenRouter. Keys are never accepted as flags. |
 | `REQUESTY_API_KEY` | Enables `ask` / `explain` via [Requesty](https://docs.requesty.ai) with `PGBOT_AI_PROVIDER=requesty` (never auto-detected). |
 | `OPPER_API_KEY` | Enables `ask` / `explain` via [Opper](https://docs.opper.ai) with `PGBOT_AI_PROVIDER=opper` (never auto-detected). |
+| `CHEAPER_INFERENCE_API_KEY` | Enables `ask` / `explain` via [Cheaper Inference](https://cheaperinference.com/docs) with `PGBOT_AI_PROVIDER=cheaperinference` (never auto-detected). |
 | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | Enables `ask` / `explain` via Google Gemini. |
 | `ANTHROPIC_API_KEY` | Enables `ask` / `explain` via Anthropic. |
 | `XAI_API_KEY` / `GROK_API_KEY` | Enables `ask` / `explain` via xAI. |
@@ -783,7 +784,7 @@ not require confirmation.
 | Bedrock Mantle | `AWS_BEARER_TOKEN_BEDROCK`, or `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | `openai.gpt-5.6-terra` | Responses (GPT) / Messages (Claude) |
 
 The OpenAI provider also supports compatible services such as OpenRouter,
-Requesty, Opper, Groq, Together, DeepSeek, Mistral, Ollama, vLLM, and LM Studio.
+Requesty, Opper, Cheaper Inference, Groq, Together, DeepSeek, Mistral, Ollama, vLLM, and LM Studio.
 `PGBOT_AI_PROVIDER=requesty` with `REQUESTY_API_KEY` points it at
 `https://router.requesty.ai/v1`; set `PGBOT_AI_MODEL` to any Requesty model id
 (for example `openai/gpt-4o-mini`), and `PGBOT_AI_BASE_URL` to
@@ -792,6 +793,10 @@ Requesty, Opper, Groq, Together, DeepSeek, Mistral, Ollama, vLLM, and LM Studio.
 `https://api.opper.ai/v3/compat`, an EU-hosted gateway. The default
 `gpt-5.6-terra` works there as is; set `PGBOT_AI_MODEL` to any Opper model id
 (for example `claude-sonnet-4-6`).
+`PGBOT_AI_PROVIDER=cheaperinference` with `CHEAPER_INFERENCE_API_KEY` points it
+at `https://api.cheaperinference.com/v1`. The default `gpt-5.6-terra` works
+there as is; set `PGBOT_AI_MODEL` to any Cheaper Inference model id (for example
+`gpt-5.4-mini`).
 
 ```
 export OPENAI_API_KEY=…
