@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -98,9 +99,9 @@ func initSQL(role, database string, p conn.Provider, withLogs bool) string {
 	b.WriteString("-- Re-running is safe: an existing role makes CREATE ROLE error (its\n")
 	b.WriteString("-- password is left as it was) and every GRANT below still applies.\n")
 	b.WriteString("\n")
-	fmt.Fprintf(&b, "CREATE ROLE %s LOGIN PASSWORD 'REPLACE-WITH-A-STRONG-PASSWORD';\n", role)
-	fmt.Fprintf(&b, "GRANT pg_monitor TO %s;\n", role)
-	fmt.Fprintf(&b, "GRANT CONNECT ON DATABASE %s TO %s;\n", database, role)
+	fmt.Fprintf(&b, "CREATE ROLE %s LOGIN PASSWORD 'REPLACE-WITH-A-STRONG-PASSWORD';\n", conn.QuoteIdent(role))
+	fmt.Fprintf(&b, "GRANT pg_monitor TO %s;\n", conn.QuoteIdent(role))
+	fmt.Fprintf(&b, "GRANT CONNECT ON DATABASE %s TO %s;\n", conn.QuoteIdent(database), conn.QuoteIdent(role))
 	b.WriteString("\n")
 
 	b.WriteString("-- pg_stat_statements powers the queries section.\n")
@@ -129,7 +130,8 @@ func initSQL(role, database string, p conn.Provider, withLogs bool) string {
 	b.WriteString("\n")
 
 	b.WriteString("-- Then point pgbot at the database and take the first reading:\n")
-	fmt.Fprintf(&b, "-- export DATABASE_URL=\"postgres://%s:<password>@<host>:5432/%s?sslmode=require\"\n", role, database)
+	fmt.Fprintf(&b, "-- export DATABASE_URL=\"postgres://%s:<password>@<host>:5432/%s?sslmode=require\"\n",
+		url.User(role).String(), url.PathEscape(database))
 	b.WriteString("-- pgbot inspect\n")
 	return b.String()
 }
