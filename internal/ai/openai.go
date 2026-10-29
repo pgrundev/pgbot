@@ -18,7 +18,11 @@ const (
 	defaultOpenRouterURL = "https://openrouter.ai/api/v1"
 	defaultRequestyURL   = "https://router.requesty.ai/v1"
 	defaultOpperURL      = "https://api.opper.ai/v3/compat"
+	defaultRuncrateURL   = "https://api.runcrate.ai/v1"
 	defaultOllamaURL     = "http://localhost:11434/v1"
+
+	// Runcrate serves open models only, so its alias needs its own default.
+	defaultRuncrateModel = "deepseek-ai/DeepSeek-V4.1-Flash"
 
 	// Applied only to reasoning models. Override with $PGBOT_AI_REASONING_EFFORT
 	// (none, low, medium, high, xhigh, max).
