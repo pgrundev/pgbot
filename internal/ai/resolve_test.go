@@ -12,7 +12,7 @@ func clearEnv(t *testing.T) {
 	for _, k := range []string{
 		"PGBOT_AI_PROVIDER", "PGBOT_AI_MODEL", "PGBOT_AI_BASE_URL", "PGBOT_AI_API_KEY",
 		"PGBOT_AI_REASONING_EFFORT", "GEMINI_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY",
-		"OPENAI_API_KEY", "OPENROUTER_API_KEY", "REQUESTY_API_KEY", "OPPER_API_KEY", "XAI_API_KEY", "GROK_API_KEY",
+		"OPENAI_API_KEY", "OPENROUTER_API_KEY", "REQUESTY_API_KEY", "OPPER_API_KEY", "RUNCRATE_API_KEY", "XAI_API_KEY", "GROK_API_KEY",
 		"AWS_BEARER_TOKEN_BEDROCK", "AWS_REGION", "AWS_DEFAULT_REGION",
 		"PGBOT_GEMINI_MODEL", "PGBOT_GEMINI_URL", "PGBOT_OPENAI_MODEL", "PGBOT_OPENAI_URL",
 	} {
@@ -312,6 +312,51 @@ func TestResolve_opper(t *testing.T) {
 	t.Setenv("OPPER_API_KEY", "k")
 	if _, err := Resolve(); err == nil {
 		t.Error("OPPER_API_KEY alone must not be auto-detected")
+	}
+}
+
+// runcrate is an explicit alias only: it goes to Runcrate with RUNCRATE_API_KEY
+// or PGBOT_AI_API_KEY, never borrows an OpenAI key, is never auto-detected, and
+// defaults to a model Runcrate serves.
+func TestResolve_runcrate(t *testing.T) {
+	for _, keyVar := range []string{"RUNCRATE_API_KEY", "PGBOT_AI_API_KEY"} {
+		clearEnv(t)
+		t.Setenv("PGBOT_AI_PROVIDER", "runcrate")
+		t.Setenv(keyVar, "k")
+		m, err := Resolve()
+		if err != nil {
+			t.Fatalf("runcrate with %s: %v", keyVar, err)
+		}
+		if m.Provider() != "openai" {
+			t.Errorf("runcrate with %s: provider = %q, want openai", keyVar, m.Provider())
+		}
+		if m.Endpoint() != defaultRuncrateURL {
+			t.Errorf("runcrate with %s: endpoint = %q, want %q", keyVar, m.Endpoint(), defaultRuncrateURL)
+		}
+		if m.Model() != defaultRuncrateModel {
+			t.Errorf("runcrate with %s: model = %q, want %q", keyVar, m.Model(), defaultRuncrateModel)
+		}
+	}
+
+	clearEnv(t)
+	t.Setenv("PGBOT_AI_PROVIDER", "runcrate")
+	t.Setenv("RUNCRATE_API_KEY", "k")
+	t.Setenv("PGBOT_AI_MODEL", "zai-org/GLM-5.3")
+	if m, err := Resolve(); err != nil || m.Model() != "zai-org/GLM-5.3" {
+		t.Errorf("runcrate with PGBOT_AI_MODEL: model = %v, err = %v", m, err)
+	}
+
+	clearEnv(t)
+	t.Setenv("PGBOT_AI_PROVIDER", "runcrate")
+	t.Setenv("OPENAI_API_KEY", "sk-openai")
+	if _, err := Resolve(); err == nil || !strings.Contains(err.Error(), "RUNCRATE_API_KEY") {
+		t.Errorf("runcrate with only OPENAI_API_KEY should ask for RUNCRATE_API_KEY, got: %v", err)
+	}
+
+	clearEnv(t)
+	t.Setenv("RUNCRATE_API_KEY", "k")
+	if _, err := Resolve(); err == nil {
+		t.Error("RUNCRATE_API_KEY alone must not be auto-detected")
 	}
 }
 
