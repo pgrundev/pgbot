@@ -6,12 +6,24 @@
 -- until REINDEXed. Scoped to current_database(): pg_collation is per-database
 -- and the database row is this one's. NULL versions (C/POSIX, or a provider that
 -- reports none) cannot drift and are excluded.
+--
+-- unreferenced: nothing uses the collation, so its drift can't misorder data (#130).
+-- PG15+ records no pg_depend rows for pinned collations (e.g. PG16's "unicode"),
+-- so column and partition-key references are checked directly too.
+WITH referenced AS (
+    SELECT refobjid AS oid FROM pg_depend WHERE refclassid = 'pg_collation'::regclass
+    UNION
+    SELECT attcollation FROM pg_attribute WHERE attnum > 0 AND NOT attisdropped
+    UNION
+    SELECT unnest(partcollation::oid[]) FROM pg_partitioned_table
+)
 SELECT 'database' AS kind,
        d.datname   AS name,
        CASE d.datlocprovider WHEN 'c' THEN 'libc' WHEN 'i' THEN 'icu' WHEN 'b' THEN 'builtin'
             ELSE d.datlocprovider::text END                       AS provider,
        d.datcollversion                                           AS recorded,
-       coalesce(pg_database_collation_actual_version(d.oid), '') AS actual
+       coalesce(pg_database_collation_actual_version(d.oid), '') AS actual,
+       false                                                      AS unreferenced
 FROM pg_database d
 WHERE d.datname = current_database()
   AND d.datcollversion IS NOT NULL
@@ -22,7 +34,8 @@ SELECT 'collation',
        CASE c.collprovider WHEN 'c' THEN 'libc' WHEN 'i' THEN 'icu' WHEN 'b' THEN 'builtin'
             ELSE c.collprovider::text END,
        c.collversion,
-       coalesce(pg_collation_actual_version(c.oid), '')
+       coalesce(pg_collation_actual_version(c.oid), ''),
+       c.oid NOT IN (SELECT oid FROM referenced)
 FROM pg_collation c
 JOIN pg_namespace n ON n.oid = c.collnamespace
 WHERE c.collversion IS NOT NULL

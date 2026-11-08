@@ -480,6 +480,8 @@ type CollationMismatch struct {
 	Provider string `json:"provider"` // libc | icu | builtin
 	Recorded string `json:"recorded_version"`
 	Actual   string `json:"actual_version"` // "" when the library reports none
+	// Nothing uses this collation. Negative so a row without it reads as in use.
+	Unreferenced bool `json:"unreferenced,omitempty"`
 }
 
 // ReplicaIdentity lists tables published for UPDATE/DELETE whose replica identity
