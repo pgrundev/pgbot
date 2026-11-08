@@ -1600,14 +1600,19 @@ func checksumFindings(c *model.Context, add func(model.Finding)) {
 // OS upgrade, a new base image, a restore onto a different host), so any btree
 // over text sorted by that collation may be silently out of order — lookups miss
 // rows and UNIQUE constraints stop catching duplicates. Critical when it is the
-// database default (every unqualified text index); warn for a named collation.
+// database default (every unqualified text index); warn for a named collation;
+// info when nothing uses the drifted collations (#130).
 func collationVersionMismatch(c *model.Context, add func(model.Finding)) {
 	if c.Collation == nil || len(c.Collation.Mismatches) == 0 {
 		return
 	}
-	var ev []string
+	var ev, unused []string
 	dbDefault := false
 	for _, m := range c.Collation.Mismatches {
+		if m.Unreferenced {
+			unused = append(unused, m.Name)
+			continue
+		}
 		actual := m.Actual
 		if actual == "" {
 			actual = "unknown"
@@ -1619,7 +1624,30 @@ func collationVersionMismatch(c *model.Context, add func(model.Finding)) {
 		}
 		ev = append(ev, fmt.Sprintf("collation %s (%s): recorded %s, library now %s", m.Name, m.Provider, m.Recorded, actual))
 	}
-	n := len(c.Collation.Mismatches)
+	if len(unused) > 0 {
+		// An ICU upgrade drifts ~870 built-in collations at once; summarize them.
+		names := strings.Join(unused[:min(3, len(unused))], ", ")
+		if len(unused) > 3 {
+			names += fmt.Sprintf(" and %d more", len(unused)-3)
+		}
+		ev = append(ev, fmt.Sprintf("%d collation(s) that nothing uses changed version: %s", len(unused), names))
+	}
+	n := len(c.Collation.Mismatches) - len(unused)
+	if n == 0 {
+		add(model.Finding{
+			ID: "collation_version_mismatch", Object: "db:" + c.Server.Database, Severity: model.SeverityInfo,
+			Title:       fmt.Sprintf("%d unused collation(s) record an older library version", len(unused)),
+			Detail:      "The collation library (libc or ICU) changed version since these collations were created, but no column, index or partition key uses them, so no index is sorted by them and none can be out of order. The recorded version is stale catalog metadata.",
+			Evidence:    ev,
+			Remediation: "Nothing needs reindexing. ALTER COLLATION … REFRESH VERSION on each records the library's current version and clears this.",
+			Caveats: []string{
+				"A collation named only inside a query (ORDER BY x COLLATE …) is not tracked as a use, but no stored order depends on it.",
+			},
+			Impact:     impact(model.DimRisk, 15, fmt.Sprintf("%d unused collation version mismatch(es)", len(unused)), "collversion ≠ the library's actual version; nothing references them"),
+			Confidence: 1.0,
+		})
+		return
+	}
 	sev, score := model.SeverityWarn, 60.0
 	title := fmt.Sprintf("%d collation(s) changed version under this database", n)
 	if dbDefault {

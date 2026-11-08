@@ -20,4 +20,7 @@ package model
 //
 // 1.5.0: additive only — Context gains the `replica_identity` section (published
 // tables with no usable replica identity). A 1.4.0 consumer still parses it.
-const SchemaVersion = "1.5.0"
+//
+// 1.6.0: additive only — a collation mismatch gains `unreferenced` (nothing uses
+// that collation). Omitted when false, so a 1.5.0 consumer still parses it.
+const SchemaVersion = "1.6.0"

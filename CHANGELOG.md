@@ -3,9 +3,15 @@
 All notable changes to pgbot are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims for
 [Semantic Versioning](https://semver.org/). The `--json` contract is versioned
-separately by `model.SchemaVersion` (currently 1.5.0).
+separately by `model.SchemaVersion` (currently 1.6.0).
 
 ## [Unreleased]
+
+### Fixed
+- `collation_version_mismatch` no longer warns about collations nothing uses
+  (#130). After an ICU upgrade it listed all ~870 built-in ICU collations in
+  every database. Unused ones are now one `info` line. Mismatches in `--json`
+  gain `unreferenced`; `SchemaVersion` → **1.6.0** (additive).
 
 ## [0.9.0] - 2026-10-18
 
