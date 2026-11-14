@@ -7,6 +7,8 @@ separately by `model.SchemaVersion` (currently 1.5.0).
 
 ## [Unreleased]
 
+## [0.10.0] - unreleased (prepared 2026-11-14; set the date when tagging)
+
 ### Added
 - **`pgbot schema snapshot | diff | compare` — migration review from the catalog.**
   `snapshot` prints the schema structure as JSON (`pgbot-schema-snapshot/1.0.0`:
