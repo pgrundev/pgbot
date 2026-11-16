@@ -7,6 +7,22 @@ separately by `model.SchemaVersion` (currently 1.5.0).
 
 ## [Unreleased]
 
+## [0.10.0] - unreleased (prepared 2026-11-14; set the date when tagging)
+
+### Added
+- **`pgbot schema snapshot | diff | compare` — migration review from the catalog.**
+  `snapshot` prints the schema structure as JSON (`pgbot-schema-snapshot/1.0.0`:
+  relations with OID, relfilenode and size, columns, indexes, constraints,
+  extensions — never a row of data). `diff before.json after.json` classifies what
+  a migration did on the same database: `table_rewritten` (relfilenode changed:
+  ACCESS EXCLUSIVE for the rewrite), `index_created_on_existing_table`,
+  `constraint_validated_on_existing_table`, `not_null_added`, `table_dropped`,
+  `column_dropped`, `table_renamed`, `column_renamed`, `index_invalid`, … with
+  critical above `--large-table-bytes` (1 GiB). `compare a.json b.json` lists the
+  structural differences between two servers given the same migration (PGX vs
+  PostgreSQL). diff and compare are offline; `--fail-on` / `--fail-on-difference`
+  gate CI.
+
 ## [0.9.0] - 2026-10-18
 
 ### Added

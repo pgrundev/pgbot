@@ -246,6 +246,7 @@ Every command takes the connection the same way — an argument, `$DATABASE_URL`
 | `indexes` · `queries` · `tables` · `vacuum` | drill into one signal |
 | `logs` | the server log over SQL — newest entries or `--live` follow (experimental) |
 | `waits` | sample where database time goes — wait classes, blockers, contention (experimental) |
+| `schema snapshot` · `schema diff` · `schema compare` | catalog-only schema snapshots; `diff` reviews what a migration did on the same database (table rewrites, blocking index builds, validating scans, drops, renames), `compare` lists structural differences between two servers (for example PGX and PostgreSQL); diff/compare are offline |
 | `erd` | the schema as an ER diagram, drawn in the terminal (`--mermaid` for GitHub) |
 | `activity` | live sessions right now — PIDs, ages, waits, and what each is running |
 | `report` | the full inspection as one self-contained HTML page (`pgbot report > report.html`) |
