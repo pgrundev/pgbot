@@ -8,8 +8,11 @@ branding:
 # renamed or altered) as a workflow artifact, downloads the newest changeset of
 # every other open PR into the same base branch, and reports where they collide:
 # a PR comment (updated in place, never duplicated), workflow annotations, the
-# job summary, and outputs. Needs permissions: contents read, actions read (to
-# download other PRs' artifacts), pull-requests write (to comment).
+# job summary, a "Database conflicts" check run (shown live in the PR's merge
+# box, no reload needed), and outputs. When this PR collides with another open
+# PR, that PR's comment and check run are refreshed too, so neither has to
+# re-run. Needs permissions: contents read, actions read (to download other
+# PRs' artifacts), pull-requests write (to comment), checks write (check runs).
 
 inputs:
   before:
@@ -28,6 +31,22 @@ inputs:
     default: none
   comment:
     description: "Post (or update) a PR comment when there is something to report. A comment that reported a conflict is updated once it clears."
+    required: false
+    default: "true"
+  check-run:
+    description: "Create a check run named after check-name on the PR (and on the other PRs it collides with). Needs checks: write."
+    required: false
+    default: "true"
+  check-name:
+    description: "Name of the check run."
+    required: false
+    default: "Database conflicts"
+  conclusion-on-conflict:
+    description: "Check run conclusion when there is a conflict: failure (red), neutral or action_required. An overlap is always neutral. The check blocks a merge only if branch protection requires it."
+    required: false
+    default: failure
+  update-others:
+    description: "Also refresh the comment and check run of every other open PR whose report this run changes, so they need no re-run."
     required: false
     default: "true"
   others-dir:
@@ -142,7 +161,9 @@ runs:
         DIR: ${{ steps.changeset.outputs.dir }}
       run: |
         found=0
-        for n in $(gh pr list --repo "$GITHUB_REPOSITORY" --base "$BASE_REF" --state open --limit 200 --json number --jq '.[].number'); do
+        gh pr list --repo "$GITHUB_REPOSITORY" --base "$BASE_REF" --state open --limit 200 \
+          --json number,headRefOid > "$DIR/prs.json"
+        for n in $(jq -r '.[].number' "$DIR/prs.json"); do
           [ "$n" = "$PR_NUMBER" ] && continue
           # Newest unexpired artifact of that PR (the API lists newest first).
           id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=${PGBOT_PREFIX}-pr-${n}&per_page=10" \
@@ -189,32 +210,27 @@ runs:
           echo "exit-code=$code"
         } >> "$GITHUB_OUTPUT"
 
-    # Quiet when there is nothing to say: a comment appears only once there is
-    # a conflict or an overlap, and is edited in place after that (including to
-    # "none" once it clears). From a fork the token is read-only, so this step
-    # cannot comment; the annotations and the job summary still carry it.
-    - name: Comment on the PR
-      if: ${{ inputs.comment == 'true' && github.event.pull_request.number }}
+    # The comment appears only once there is a conflict or an overlap and is
+    # edited in place after that (including to "none" once it clears). The
+    # check run is what the merge box shows live. From a fork the token is
+    # read-only, so this step cannot write; annotations and the summary remain.
+    - name: Report on the PRs
+      if: ${{ github.event.pull_request.number && (inputs.comment == 'true' || inputs.check-run == 'true') }}
       continue-on-error: true
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ github.repository }}
+        DIR: ${{ steps.changeset.outputs.dir }}
+        LABEL: ${{ steps.changeset.outputs.label }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
-        REPORT: ${{ steps.check.outputs.report-file }}
-        ITEMS: ${{ steps.check.outputs.conflicts }}+${{ steps.check.outputs.overlaps }}
-      run: |
-        marker='<!-- pgbot-schema-conflicts -->'
-        existing=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
-                     --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | head -n 1)
-        if [ "$ITEMS" = "0+0" ] && [ -z "$existing" ]; then
-          echo "nothing to report and no earlier comment: staying quiet"
-          exit 0
-        fi
-        if [ -n "$existing" ]; then
-          gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$existing" -F "body=@$REPORT" --jq .html_url
-        else
-          gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -F "body=@$REPORT" --jq .html_url
-        fi
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        COMMENT: ${{ inputs.comment }}
+        CHECK_RUN: ${{ inputs.check-run }}
+        CHECK_NAME: ${{ inputs.check-name }}
+        CONCLUSION_ON_CONFLICT: ${{ inputs.conclusion-on-conflict }}
+        UPDATE_OTHERS: ${{ inputs.others-dir == '' && inputs.update-others || 'false' }}
+      run: '"$GITHUB_ACTION_PATH/report.sh"'
 
     - name: Enforce fail-on
       shell: bash

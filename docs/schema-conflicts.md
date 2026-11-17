@@ -27,11 +27,12 @@ SQL.
    | **conflict** | both create one name; one drops or renames what the other changes; one drops a table or column the other's new foreign key or index uses | the second PR to merge: its migration fails ("already exists", "does not exist") or lands on the wrong object |
    | **overlap** | both change the same table, in different objects | nothing yet; whichever merges second must re-run its migrations on top of the first and regenerate `schema.rb` / `structure.sql` |
 
-4. **Report.** A PR comment (posted only when there is something to say, then
+4. **Report.** A **check run**, "Database conflicts — 1 conflict with #11", red
+   on a conflict: the merge box shows it live, without a page reload. A PR comment (posted only when there is something to say, then
    edited in place, including to "none" once it clears), one annotation per
    item, the job summary, and outputs `conflicts` / `overlaps` / `changes`.
-   The comment names the other PR (`#11`), so GitHub links it from that PR's
-   timeline too.
+   The other PR's comment and check run are refreshed by the same run, so a
+   conflict shows on both PRs at once, without re-running anything.
 
 ## GitHub Actions
 
@@ -49,6 +50,7 @@ permissions:
   contents: read
   actions: read        # download other PRs' changesets
   pull-requests: write # comment
+  checks: write        # the "Database conflicts" check run
 
 concurrency:
   group: db-conflicts-${{ github.event.pull_request.number }}
@@ -117,6 +119,9 @@ from the schema is enough and takes seconds.
 | `label` | `#<PR number>` | how this PR is named in reports |
 | `fail-on` | `none` | `conflict` fails the job on a conflict, `overlap` on an overlap too |
 | `comment` | `true` | post / update the PR comment |
+| `check-run` | `true` | a "Database conflicts" check run on the PR (needs `checks: write`) |
+| `conclusion-on-conflict` | `failure` | `failure` (red), `neutral` or `action_required`; blocks merging only if branch protection requires the check |
+| `update-others` | `true` | refresh the comment and check run of the other PRs this run collides with (or no longer does) |
 | `others-dir` | | read other changesets from a directory instead of open PRs' artifacts |
 | `artifact-prefix` | `pgbot-changeset` | to run two independent checks (two databases) in one repository |
 | `retention-days` | `30` | changeset artifact lifetime; a PR idle longer drops out of others' checks |
@@ -128,8 +133,8 @@ cannot comment.
 ## Limits
 
 - A PR's changeset is as fresh as its last CI run. When PR #11 is pushed and
-  now collides with #12, #11's check reports it right away; #12's comment
-  updates on #12's next run.
+  now collides with #12, #11's run reports it on both PRs; but #12's own
+  changes are known only as of #12's last run.
 - Only the schema is compared. A data migration (`UPDATE` in a migration) or
   application code that reads a column another PR renames is invisible.
 - A clean result means no two PRs touch the same objects, not that they work
