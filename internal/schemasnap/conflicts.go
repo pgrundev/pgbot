@@ -179,6 +179,7 @@ func pairConflicts(a, b *Changeset) []Conflict {
 		}
 	}
 
+	aNew, bNew := createdTables(a), createdTables(b)
 	for _, x := range a.Changes {
 		for _, y := range b.Changes {
 			// 1. Both change the same object.
@@ -192,8 +193,8 @@ func pairConflicts(a, b *Changeset) []Conflict {
 				} else if x.removes() != "" {
 					obj = x.removes()
 				}
-				if x.Kind == "sequence" && x.Table != x.Object && x.Table == y.Table {
-					obj = x.Table // a new table's serial sequence: part of that table's conflict
+				if x.Table != x.Object && x.Table == y.Table && aNew[x.Table] && bNew[y.Table] {
+					obj = x.Table // a serial sequence or foreign key of a table both create: part of that table's conflict
 				}
 				record(obj, x.Table, sameObjectReason(x, y, a.Label, b.Label), x, y)
 				continue
@@ -244,6 +245,17 @@ func verb(op string) string {
 }
 
 // sameObjectReason: x (from branch lx) and y (from ly) touch one object.
+// createdTables: the relations a changeset creates.
+func createdTables(s *Changeset) map[string]bool {
+	m := map[string]bool{}
+	for _, x := range s.Changes {
+		if x.Op == OpCreated && isRelationKind(x.Kind) && x.Table == x.Object {
+			m[x.Object] = true
+		}
+	}
+	return m
+}
+
 func sameObjectReason(x, y Change, lx, ly string) string {
 	switch {
 	case x.Op == OpCreated && y.Op == OpCreated:

@@ -162,3 +162,18 @@ func TestConflictsFocusPutsFocusFirst(t *testing.T) {
 		t.Errorf("unfocused: want 3 pairs, got %s", itemKeys(all.Items))
 	}
 }
+
+// Both create one table: its serial sequence and foreign keys are part of the
+// one conflict, not conflicts of their own.
+func TestConflictsFoldNewTableParts(t *testing.T) {
+	parts := func(label string) *Changeset {
+		return cs(label,
+			Change{Op: OpCreated, Kind: "table", Object: "public.inv", Table: "public.inv", Def: "table", Detail: "t"},
+			Change{Op: OpCreated, Kind: "sequence", Object: "public.inv_id_seq", Table: "public.inv", Def: "sequence", Detail: "s"},
+			Change{Op: OpCreated, Kind: KindConstraint, Object: "public.inv.fk", Table: "public.inv", Def: "foreign_key x", Detail: "f"})
+	}
+	rep := Conflicts([]*Changeset{parts("A"), parts("B")}, "")
+	if len(rep.Items) != 1 || rep.Items[0].Object != "public.inv" || len(rep.Items[0].AChanges) != 3 {
+		t.Fatalf("want one folded conflict on public.inv, got %s %+v", itemKeys(rep.Items), rep.Items)
+	}
+}
