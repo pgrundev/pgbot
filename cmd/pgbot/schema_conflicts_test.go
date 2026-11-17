@@ -98,3 +98,32 @@ func TestConflictsExitCode(t *testing.T) {
 		t.Error("overlap exit codes")
 	}
 }
+
+func TestCompareMarkdownSummarisesBySide(t *testing.T) {
+	rep := schemasnap.CompareReport{ALabel: "Golden Copy", BLabel: "production", Differences: []schemasnap.Difference{
+		{Object: "public.t", Field: "relation", A: "", B: "table"},
+		{Object: "public.t2.c", Field: "column", A: "", B: "c int"},
+		{Object: "public.t2.d", Field: "column", A: "", B: "d int"},
+		{Object: "public.old_idx", Field: "index", A: "CREATE INDEX old_idx …", B: ""},
+		{Object: "public.t2.e", Field: "column_definition", A: "e int", B: "e bigint"},
+	}}
+	var buf bytes.Buffer
+	writeCompareMarkdown(&buf, rep)
+	out := buf.String()
+	for _, want := range []string{
+		"Golden Copy differs from production: 5 structural difference(s)",
+		"**Missing on Golden Copy** (present on production): 1 table, 2 columns",
+		"**Only on Golden Copy** (gone from production): 1 index",
+		"**Defined differently**: 1 column",
+		"| `public.t2.e` | column definition | e int | e bigint |",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	buf.Reset()
+	writeCompareMarkdown(&buf, schemasnap.CompareReport{ALabel: "Golden Copy", BLabel: "production", Identical: true})
+	if !strings.Contains(buf.String(), "### Golden Copy matches production") {
+		t.Errorf("identical: %s", buf.String())
+	}
+}
