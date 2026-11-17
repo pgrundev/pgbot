@@ -28,7 +28,7 @@ func newSchemaCmd() *cobra.Command {
 			"dropped tables/columns, renames. `compare` compares the same migration applied on two DIFFERENT servers\n" +
 			"(for example PGX and PostgreSQL) and lists every structural difference. diff and compare are offline.",
 	}
-	cmd.AddCommand(newSchemaSnapshotCmd(), newSchemaDiffCmd(), newSchemaCompareCmd())
+	cmd.AddCommand(newSchemaSnapshotCmd(), newSchemaDiffCmd(), newSchemaCompareCmd(), newSchemaChangesetCmd(), newSchemaConflictsCmd())
 	return cmd
 }
 
