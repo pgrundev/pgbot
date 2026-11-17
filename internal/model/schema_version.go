@@ -20,4 +20,9 @@ package model
 //
 // 1.5.0: additive only — Context gains the `replica_identity` section (published
 // tables with no usable replica identity). A 1.4.0 consumer still parses it.
-const SchemaVersion = "1.5.0"
+//
+// 1.6.0: additive only — Context gains io_stats (pg_stat_io rates and
+// latencies, PG16+); PartitionRollup gains hot/big partition skew fields;
+// WaitStudy gains io (pg_stat_io over the sampling window). A 1.5.0 consumer
+// still parses 1.6.0 output.
+const SchemaVersion = "1.6.0"
