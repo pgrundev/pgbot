@@ -54,6 +54,7 @@ func TestDiffAgainstRealMigrations(t *testing.T) {
 	exec(`CREATE TABLE orders (id bigserial PRIMARY KEY, user_id bigint, total int)`)
 	exec(`INSERT INTO orders (user_id, total) SELECT (g % 5000) + 1, g FROM generate_series(1, 5000) g`)
 	exec(`CREATE TABLE scratch (id int)`)
+	exec(`CREATE TABLE empty_t (id int, note text)`)
 	exec(`INSERT INTO scratch VALUES (1)`)
 	exec(`CREATE INDEX orders_total_idx ON orders (total)`)
 
@@ -72,7 +73,8 @@ func TestDiffAgainstRealMigrations(t *testing.T) {
 	exec(`ALTER TABLE users ADD COLUMN plan text NOT NULL DEFAULT 'free'`)                               // safe (PG11+: no rewrite)
 	exec(`DROP TABLE scratch`)                                                                           // data loss
 	exec(`DROP INDEX orders_total_idx`)
-	exec(`CREATE TABLE audit (id int PRIMARY KEY)`) // harmless
+	exec(`CREATE TABLE audit (id int PRIMARY KEY)`)       // harmless
+	exec(`CREATE INDEX empty_note_idx ON empty_t (note)`) // on an empty table: info only
 
 	after, err := Take(ctx, c)
 	if err != nil {
@@ -95,6 +97,7 @@ func TestDiffAgainstRealMigrations(t *testing.T) {
 		"column_type_changed public.orders.total":                             SevWarning,
 		"table_created public.audit":                                          SevInfo,
 		"column_added public.users.plan":                                      SevInfo,
+		"index_created public.empty_note_idx":                                 SevInfo,
 	}
 	for k, sev := range want {
 		f, ok := got[k]

@@ -33,23 +33,21 @@ const compareCaveat = "Structure only (relations, columns, indexes, constraints,
 
 type relShape struct {
 	kind    string
-	columns []string
+	columns map[string]string // name → shape (type, NOT NULL, default, identity, generated)
 }
 
 func shapes(s *Snapshot) (map[string]relShape, map[string]Index, map[string]Constraint, map[string]string) {
 	byOID := relByOID(s)
 	rels := map[string]relShape{}
 	for _, r := range s.Relations {
-		rels[r.qname()] = relShape{kind: r.Kind}
+		rels[r.qname()] = relShape{kind: r.Kind, columns: map[string]string{}}
 	}
 	for _, c := range s.Columns {
 		r, ok := byOID[c.RelOID]
 		if !ok {
 			continue
 		}
-		sh := rels[r.qname()]
-		sh.columns = append(sh.columns, columnShape(c))
-		rels[r.qname()] = sh
+		rels[r.qname()].columns[c.Name] = columnShape(c)
 	}
 	idx := map[string]Index{}
 	for _, i := range s.Indexes {
@@ -110,8 +108,20 @@ func Compare(a, b *Snapshot, aLabel, bLabel string) CompareReport {
 			if x.kind != y.kind {
 				add(name, "kind", x.kind, y.kind)
 			}
-			if strings.Join(x.columns, ", ") != strings.Join(y.columns, ", ") {
-				add(name, "columns", strings.Join(x.columns, ", "), strings.Join(y.columns, ", "))
+			// Column by column, so a report names the column, not the whole table.
+			// Order is ignored: two servers that added the same columns in a
+			// different order have the same structure for every query by name.
+			for _, col := range unionKeys(x.columns, y.columns) {
+				xc, xok := x.columns[col]
+				yc, yok := y.columns[col]
+				switch {
+				case !xok:
+					add(name+"."+col, "column", "", yc)
+				case !yok:
+					add(name+"."+col, "column", xc, "")
+				case xc != yc:
+					add(name+"."+col, "column_definition", xc, yc)
+				}
 			}
 		}
 	}

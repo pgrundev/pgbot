@@ -103,6 +103,38 @@ jobs:
           fail-on: warn
           upload-sarif: "false"
 
+      # conflicts/ action: two "PRs" migrated on copies of one base database;
+      # the other PR's changeset comes from others-dir (no GitHub API on push).
+      - name: conflicts action fixture — base schema, this branch, another PR
+        run: |
+          docker exec pg psql -U postgres -q -c "CREATE DATABASE app_base"
+          docker exec pg psql -U postgres -d app_base -q \
+            -c "CREATE TABLE users (id bigserial PRIMARY KEY, email text); INSERT INTO users (email) SELECT 'u'||g FROM generate_series(1, 100) g;"
+          docker exec pg psql -U postgres -q -c "CREATE DATABASE app_mine TEMPLATE app_base" -c "CREATE DATABASE app_other TEMPLATE app_base"
+          pgbot schema snapshot postgres://postgres:pw@127.0.0.1:5432/app_base > before.json
+          docker exec pg psql -U postgres -d app_mine -q -c "CREATE INDEX users_email_idx ON users (email)"
+          docker exec pg psql -U postgres -d app_other -q -c "ALTER TABLE users RENAME COLUMN email TO email_address"
+          pgbot schema snapshot postgres://postgres:pw@127.0.0.1:5432/app_mine > after.json
+          mkdir -p others
+          pgbot schema changeset before.json postgres://postgres:pw@127.0.0.1:5432/app_other --label "#other" > others/other.json
+      - name: conflicts action (fail-on=none reports, does not fail)
+        id: conflicts
+        uses: ./conflicts
+        with:
+          before: before.json
+          after: after.json
+          label: "#mine"
+          others-dir: others
+      - name: the conflicts action found the rename-vs-index conflict
+        env:
+          CONFLICTS: ${{ steps.conflicts.outputs.conflicts }}
+          CHANGES: ${{ steps.conflicts.outputs.changes }}
+          REPORT: ${{ steps.conflicts.outputs.report-file }}
+        run: |
+          test "$CONFLICTS" = 1 && test "$CHANGES" = 1
+          head -1 "$REPORT" | grep -qF '<!-- pgbot-schema-conflicts -->'
+          grep -qF 'public.users.email' "$REPORT"
+
   # action-smoke pre-builds pgbot onto PATH, so it never runs install.sh. This job
   # deliberately does NOT, so the action must install via `install.sh` with the
   # default version 'latest' — the path the "latest is a literal tag → 404" bug
@@ -225,6 +257,8 @@ jobs:
           # cmd/pgbot integration: the advisor's read-only-blocks-a-write proof and
           # the MCP explain_plan/schema_of tools, against the same server.
           go test ./cmd/pgbot/ -run Integration -v
+          # schema snapshot/diff/changeset/conflicts against real migrations and branch copies
+          go test ./internal/schemasnap/ -v
       - name: degrade cleanly without pg_stat_statements
         run: |
           docker rm -f pg

@@ -1,0 +1,237 @@
+name: "pgbot database conflicts between PRs"
+description: "Records the schema changes a PR's migrations make and checks them against every other open PR's, so database conflicts show up in a minute instead of after the whole CI run."
+branding:
+  icon: git-pull-request
+  color: blue
+
+# Each run records this PR's changeset (what its migrations created, dropped,
+# renamed or altered) as a workflow artifact, downloads the newest changeset of
+# every other open PR into the same base branch, and reports where they collide:
+# a PR comment (updated in place, never duplicated), workflow annotations, the
+# job summary, a "Database conflicts" check run (shown live in the PR's merge
+# box, no reload needed), and outputs. When this PR collides with another open
+# PR, that PR's comment and check run are refreshed too, so neither has to
+# re-run. Needs permissions: contents read, actions read (to download other
+# PRs' artifacts), pull-requests write (to comment), checks write (check runs).
+
+inputs:
+  before:
+    description: "Schema of the target branch: a `pgbot schema snapshot` file, or a connection string to snapshot now."
+    required: true
+  after:
+    description: "Schema after this PR's migrations ran on top of `before`: a snapshot file or a connection string."
+    required: true
+  label:
+    description: "How this PR is named in reports. Default: #<PR number>."
+    required: false
+    default: ""
+  fail-on:
+    description: "Fail the job on: conflict | overlap | none. Default none: report, don't block."
+    required: false
+    default: none
+  comment:
+    description: "Post (or update) a PR comment when there is something to report. A comment that reported a conflict is updated once it clears."
+    required: false
+    default: "true"
+  check-run:
+    description: "Create a check run named after check-name on the PR (and on the other PRs it collides with). Needs checks: write."
+    required: false
+    default: "true"
+  check-name:
+    description: "Name of the check run."
+    required: false
+    default: "Database conflicts"
+  conclusion-on-conflict:
+    description: "Check run conclusion when there is a conflict: failure (red), neutral or action_required. An overlap is always neutral. The check blocks a merge only if branch protection requires it."
+    required: false
+    default: failure
+  update-others:
+    description: "Also refresh the comment and check run of every other open PR whose report this run changes, so they need no re-run."
+    required: false
+    default: "true"
+  others-dir:
+    description: "Read other PRs' changesets from this directory instead of downloading them from open PRs (for self-hosted setups and tests)."
+    required: false
+    default: ""
+  artifact-prefix:
+    description: "Changeset artifacts are named <prefix>-pr-<number>. Change it only to run two independent checks (e.g. two databases) in one repository."
+    required: false
+    default: pgbot-changeset
+  retention-days:
+    description: "How long a PR's changeset artifact is kept. A PR not pushed to for longer drops out of other PRs' checks."
+    required: false
+    default: "30"
+  github-token:
+    description: "Token for listing PRs, downloading artifacts and commenting."
+    required: false
+    default: ${{ github.token }}
+  version:
+    description: "pgbot version to install (e.g. v0.11.0), or 'latest'. Ignored if pgbot is already on PATH."
+    required: false
+    default: latest
+
+outputs:
+  conflicts:
+    description: "Number of conflicts with other open PRs."
+    value: ${{ steps.check.outputs.conflicts }}
+  overlaps:
+    description: "Number of overlaps (same table changed) with other open PRs."
+    value: ${{ steps.check.outputs.overlaps }}
+  changes:
+    description: "Number of schema objects this PR changes."
+    value: ${{ steps.changeset.outputs.changes }}
+  report-file:
+    description: "Path of the markdown report."
+    value: ${{ steps.check.outputs.report-file }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install pgbot
+      shell: bash
+      env:
+        PGBOT_VERSION: ${{ inputs.version != 'latest' && inputs.version || '' }}
+      run: |
+        if command -v pgbot >/dev/null 2>&1; then
+          echo "pgbot already on PATH: $(pgbot --version)"
+        else
+          export PGBOT_INSTALL_DIR="$HOME/.local/bin"
+          curl -fsSL https://pgbot.dev/install | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+        fi
+        if ! pgbot schema conflicts --help >/dev/null 2>&1; then
+          echo "::error::this pgbot ($(pgbot --version)) has no 'schema conflicts'; set the action's version input to a release that does"
+          exit 3
+        fi
+
+    - name: Record this PR's schema changes
+      id: changeset
+      shell: bash
+      env:
+        # Everything user-controlled goes through env, never into the script text.
+        PGBOT_BEFORE: ${{ inputs.before }}
+        PGBOT_AFTER: ${{ inputs.after }}
+        PGBOT_LABEL: ${{ inputs.label }}
+        PGBOT_PREFIX: ${{ inputs.artifact-prefix }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_TITLE: ${{ github.event.pull_request.title }}
+        PR_URL: ${{ github.event.pull_request.html_url }}
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      run: |
+        dir="$RUNNER_TEMP/pgbot-conflicts"
+        rm -rf "$dir" && mkdir -p "$dir/mine" "$dir/others"
+        label="$PGBOT_LABEL"
+        if [ -z "$label" ]; then
+          if [ -n "$PR_NUMBER" ]; then label="#$PR_NUMBER"; else label="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"; fi
+        fi
+        pgbot schema changeset "$PGBOT_BEFORE" "$PGBOT_AFTER" \
+          --label "$label" --title "$PR_TITLE" --url "$PR_URL" --ref "${PR_HEAD_SHA:-$GITHUB_SHA}" \
+          > "$dir/mine/changeset.json"
+        changes=$(jq '.changes | length' "$dir/mine/changeset.json")
+        echo "this PR changes $changes schema object(s):"
+        jq -r '.changes[] | "  " + .detail' "$dir/mine/changeset.json"
+        {
+          echo "dir=$dir"
+          echo "label=$label"
+          echo "changes=$changes"
+          echo "artifact=${PGBOT_PREFIX}-pr-${PR_NUMBER}"
+        } >> "$GITHUB_OUTPUT"
+
+    # Always uploaded, an empty changeset too: a PR that drops its migration
+    # must stop showing up in other PRs' checks.
+    - name: Publish the changeset for other PRs' checks
+      if: ${{ github.event.pull_request.number }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ steps.changeset.outputs.artifact }}
+        path: ${{ steps.changeset.outputs.dir }}/mine/changeset.json
+        overwrite: true
+        if-no-files-found: error
+        retention-days: ${{ inputs.retention-days }}
+
+    - name: Fetch other open PRs' changesets
+      if: ${{ inputs.others-dir == '' && github.event.pull_request.number }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PGBOT_PREFIX: ${{ inputs.artifact-prefix }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        BASE_REF: ${{ github.event.pull_request.base.ref }}
+        DIR: ${{ steps.changeset.outputs.dir }}
+      run: |
+        found=0
+        gh pr list --repo "$GITHUB_REPOSITORY" --base "$BASE_REF" --state open --limit 200 \
+          --json number,headRefOid > "$DIR/prs.json"
+        for n in $(jq -r '.[].number' "$DIR/prs.json"); do
+          [ "$n" = "$PR_NUMBER" ] && continue
+          # Newest unexpired artifact of that PR (the API lists newest first).
+          id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=${PGBOT_PREFIX}-pr-${n}&per_page=10" \
+                 --jq '[.artifacts[] | select(.expired | not)][0].id // empty')
+          [ -z "$id" ] && continue
+          if gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$DIR/pr-$n.zip" 2>/dev/null \
+             && unzip -oq "$DIR/pr-$n.zip" -d "$DIR/others/pr-$n"; then
+            found=$((found + 1))
+          else
+            echo "::warning::could not download the changeset of #$n (artifact $id)"
+          fi
+          rm -f "$DIR/pr-$n.zip"
+        done
+        echo "changesets of $found other open PR(s) into $BASE_REF"
+
+    - name: Check for conflicts
+      id: check
+      shell: bash
+      env:
+        DIR: ${{ steps.changeset.outputs.dir }}
+        OTHERS: ${{ inputs.others-dir }}
+        LABEL: ${{ steps.changeset.outputs.label }}
+        FAIL_ON: ${{ inputs.fail-on }}
+      run: |
+        others="${OTHERS:-$DIR/others}"
+        args=("$DIR/mine/changeset.json" "$others" --focus "$LABEL")
+        pgbot schema conflicts "${args[@]}" --format markdown > "$DIR/report.md"
+        pgbot schema conflicts "${args[@]}" --format json > "$DIR/report.json"
+        # One annotation per item, shown on the run and the PR's checks tab.
+        pgbot schema conflicts "${args[@]}" --format github
+        set +e
+        pgbot schema conflicts "${args[@]}" --format json --fail-on "$FAIL_ON" > /dev/null
+        code=$?
+        set -e
+        if [ "$code" -ne 0 ] && [ "$code" -ne 1 ] && [ "$code" -ne 2 ]; then
+          echo "::error::pgbot schema conflicts failed (exit $code)"
+          exit "$code"
+        fi
+        cat "$DIR/report.md" >> "$GITHUB_STEP_SUMMARY"
+        {
+          echo "conflicts=$(jq .summary.conflicts "$DIR/report.json")"
+          echo "overlaps=$(jq .summary.overlaps "$DIR/report.json")"
+          echo "report-file=$DIR/report.md"
+          echo "exit-code=$code"
+        } >> "$GITHUB_OUTPUT"
+
+    # The comment appears only once there is a conflict or an overlap and is
+    # edited in place after that (including to "none" once it clears). The
+    # check run is what the merge box shows live. From a fork the token is
+    # read-only, so this step cannot write; annotations and the summary remain.
+    - name: Report on the PRs
+      if: ${{ github.event.pull_request.number && (inputs.comment == 'true' || inputs.check-run == 'true') }}
+      continue-on-error: true
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ github.repository }}
+        DIR: ${{ steps.changeset.outputs.dir }}
+        LABEL: ${{ steps.changeset.outputs.label }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        COMMENT: ${{ inputs.comment }}
+        CHECK_RUN: ${{ inputs.check-run }}
+        CHECK_NAME: ${{ inputs.check-name }}
+        CONCLUSION_ON_CONFLICT: ${{ inputs.conclusion-on-conflict }}
+        UPDATE_OTHERS: ${{ inputs.others-dir == '' && inputs.update-others || 'false' }}
+      run: '"$GITHUB_ACTION_PATH/report.sh"'
+
+    - name: Enforce fail-on
+      shell: bash
+      run: exit ${{ steps.check.outputs.exit-code }}

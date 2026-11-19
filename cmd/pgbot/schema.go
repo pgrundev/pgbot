@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/pgrundev/pgbot/internal/conn"
@@ -28,7 +29,7 @@ func newSchemaCmd() *cobra.Command {
 			"dropped tables/columns, renames. `compare` compares the same migration applied on two DIFFERENT servers\n" +
 			"(for example PGX and PostgreSQL) and lists every structural difference. diff and compare are offline.",
 	}
-	cmd.AddCommand(newSchemaSnapshotCmd(), newSchemaDiffCmd(), newSchemaCompareCmd())
+	cmd.AddCommand(newSchemaSnapshotCmd(), newSchemaDiffCmd(), newSchemaCompareCmd(), newSchemaChangesetCmd(), newSchemaConflictsCmd())
 	return cmd
 }
 
@@ -136,8 +137,10 @@ func newSchemaCompareCmd() *cobra.Command {
 						fmt.Fprintf(w, "  %s [%s]\n    %s: %s\n    %s: %s\n", d.Object, d.Field, aLabel, orMissing(d.A), bLabel, orMissing(d.B))
 					}
 				}
+			case "markdown":
+				writeCompareMarkdown(cmd.OutOrStdout(), rep)
 			default:
-				return usageErrf("unknown --format %q (valid: text, json)", format)
+				return usageErrf("unknown --format %q (valid: text, json, markdown)", format)
 			}
 			if failOnDifference && !rep.Identical {
 				os.Exit(1)
@@ -146,7 +149,7 @@ func newSchemaCompareCmd() *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&format, "format", "text", "output format: text|json")
+	fl.StringVar(&format, "format", "text", "output format: text|json|markdown")
 	fl.StringVar(&aLabel, "a-label", "a", "name for the first snapshot's server")
 	fl.StringVar(&bLabel, "b-label", "b", "name for the second snapshot's server")
 	fl.BoolVar(&failOnDifference, "fail-on-difference", false, "exit 1 when the structures differ")
@@ -211,4 +214,95 @@ func writeDiffText(w io.Writer, rep schemasnap.DiffReport) {
 		}
 	}
 	fmt.Fprintf(w, "\n%s\n", rep.Caveat)
+}
+
+// compareGroup sorts a difference into "missing on a", "only on a" or
+// "different", with the kind of object it is about.
+func compareGroup(d schemasnap.Difference) (group, kind string) {
+	kind = d.Field
+	switch d.Field {
+	case "relation":
+		kind = d.A + d.B // the side that has it names its kind (table, view, sequence…)
+	case "column_definition", "index_definition", "index_valid", "constraint_definition", "constraint_validated", "kind":
+		return "different", strings.SplitN(d.Field, "_", 2)[0]
+	}
+	switch {
+	case d.A == "":
+		return "missing", kind
+	case d.B == "":
+		return "extra", kind
+	}
+	return "different", kind
+}
+
+func countPhrase(counts map[string]int) string {
+	order := []string{"table", "partitioned_table", "view", "matview", "sequence", "column", "index", "constraint", "extension"}
+	var parts []string
+	seen := map[string]bool{}
+	for _, k := range order {
+		if n := counts[k]; n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", n, kindPlural(k, n)))
+			seen[k] = true
+		}
+	}
+	for k, n := range counts { // anything not in the list above
+		if !seen[k] && n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", n, kindPlural(k, n)))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+func kindPlural(k string, n int) string {
+	k = strings.ReplaceAll(k, "_", " ")
+	switch {
+	case n == 1:
+		return k
+	case strings.HasSuffix(k, "x"):
+		return k + "es" // index → indexes
+	}
+	return k + "s"
+}
+
+// writeCompareMarkdown renders a compare report for a PR check or a job
+// summary: a one-line verdict, counts by kind, then every difference.
+func writeCompareMarkdown(w io.Writer, rep schemasnap.CompareReport) {
+	a, b := rep.ALabel, rep.BLabel
+	if rep.Identical {
+		fmt.Fprintf(w, "### %s matches %s\n\nSame structure: relations, columns, indexes, constraints and extensions (%s %s, %s %s).\n\n<sub>%s</sub>\n",
+			a, b, a, rep.AServer, b, rep.BServer, rep.Caveat)
+		return
+	}
+	missing, extra, different := map[string]int{}, map[string]int{}, map[string]int{}
+	for _, d := range rep.Differences {
+		g, k := compareGroup(d)
+		switch g {
+		case "missing":
+			missing[k]++
+		case "extra":
+			extra[k]++
+		default:
+			different[k]++
+		}
+	}
+	fmt.Fprintf(w, "### %s differs from %s: %d structural difference(s)\n\n", a, b, len(rep.Differences))
+	if len(missing) > 0 {
+		fmt.Fprintf(w, "- **Missing on %s** (present on %s): %s\n", a, b, countPhrase(missing))
+	}
+	if len(extra) > 0 {
+		fmt.Fprintf(w, "- **Only on %s** (gone from %s): %s\n", a, b, countPhrase(extra))
+	}
+	if len(different) > 0 {
+		fmt.Fprintf(w, "- **Defined differently**: %s\n", countPhrase(different))
+	}
+	const maxRows = 300
+	fmt.Fprintf(w, "\n<details><summary>All %d differences</summary>\n\n| Object | What | %s | %s |\n|---|---|---|---|\n", len(rep.Differences), mdCell([]string{a}), mdCell([]string{b}))
+	for i, d := range rep.Differences {
+		if i == maxRows {
+			fmt.Fprintf(w, "| … | %d more: run `pgbot schema compare` for the full list | | |\n", len(rep.Differences)-maxRows)
+			break
+		}
+		fmt.Fprintf(w, "| `%s` | %s | %s | %s |\n", d.Object, strings.ReplaceAll(d.Field, "_", " "), mdCell([]string{orMissing(d.A)}), mdCell([]string{orMissing(d.B)}))
+	}
+	fmt.Fprintf(w, "\n</details>\n\n<sub>%s %s, %s %s. %s</sub>\n", a, rep.AServer, b, rep.BServer, rep.Caveat)
 }

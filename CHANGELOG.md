@@ -7,6 +7,28 @@ separately by `model.SchemaVersion` (currently 1.5.0).
 
 ## [Unreleased]
 
+### Added
+- **`pgbot schema changeset` and `pgbot schema conflicts`: database conflicts between open PRs.**
+  `changeset before after` lists every object a branch's migrations created, dropped, renamed or
+  altered (`pgbot-schema-changeset/1.0.0`; either side may be a snapshot file or a connection
+  string; renames are recognised by catalog identity). `conflicts` checks changesets against each
+  other: a **conflict** when both create one name or one drops/renames what the other changes or
+  references (foreign keys, index columns), an **overlap** when both change the same table.
+  `--focus` checks one branch against the rest; `--format markdown` is a PR comment,
+  `--format github` workflow annotations; `--fail-on conflict|overlap`.
+- **`pgbot schema compare --format markdown`**, for a PR check or a job summary: a verdict, what is
+  missing on either side counted by kind, then every difference.
+- **`pgrundev/pgbot/conflicts` GitHub Action.** Publishes the PR's changeset as an artifact,
+  downloads every other open PR's, and comments on the PR (edited in place, quiet when clean).
+  Runs as its own short job, so a conflict is reported before the test suite finishes.
+  See [docs/schema-conflicts.md](docs/schema-conflicts.md).
+
+### Changed
+- `pgbot schema compare` reports columns one by one (`column`, `column_definition` on
+  `schema.table.column`) instead of one `columns` difference per table, and ignores column order.
+- `pgbot schema diff` reports an index built on an existing but empty table as `index_created`
+  (info) instead of nothing, so a review on a copy without data still lists it.
+
 ## [0.10.0] - 2026-11-16
 
 ### Added

@@ -247,6 +247,7 @@ Every command takes the connection the same way — an argument, `$DATABASE_URL`
 | `logs` | the server log over SQL — newest entries or `--live` follow (experimental) |
 | `waits` | sample where database time goes — wait classes, blockers, contention (experimental) |
 | `schema snapshot` · `schema diff` · `schema compare` | catalog-only schema snapshots; `diff` reviews what a migration did on the same database (table rewrites, blocking index builds, validating scans, drops, renames), `compare` lists structural differences between two servers (for example PGX and PostgreSQL); diff/compare are offline |
+| `schema changeset` · `schema conflicts` | what a branch's migrations changed, checked against other open branches: two PRs creating one name, or one dropping/renaming what the other changes, reported in the first minute of CI ([docs](docs/schema-conflicts.md)) |
 | `erd` | the schema as an ER diagram, drawn in the terminal (`--mermaid` for GitHub) |
 | `activity` | live sessions right now — PIDs, ages, waits, and what each is running |
 | `report` | the full inspection as one self-contained HTML page (`pgbot report > report.html`) |
@@ -1159,6 +1160,24 @@ on: { schedule: [{ cron: "0 7 * * *" }] }
 — which sees backups, replication, bloat, and wraparound that a schema check
 never can. A clean `--profile=schema` report says nothing about a running
 database's health; its own header says so.
+
+### Database conflicts between open PRs
+
+Two PRs can each pass CI and still collide once both merge: one renames
+`users.email` while the other indexes it, both create `invoices`. A small
+workflow records what each PR's migrations changed (a catalog-only changeset,
+shared as an artifact) and checks it against every other open PR's, so the
+collision shows up as a PR comment in the first minute instead of after the
+second PR's full test run:
+
+```yaml
+- uses: pgrundev/pgbot/conflicts@v1
+  with:
+    before: ${{ runner.temp }}/before.json   # base branch schema
+    after: ${{ runner.temp }}/after.json     # + this PR's migrations
+```
+
+Full workflow, rules and limits: [docs/schema-conflicts.md](docs/schema-conflicts.md).
 
 ### Prometheus
 
