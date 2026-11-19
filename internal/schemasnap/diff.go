@@ -250,8 +250,14 @@ func (d *differ) indexes() {
 			continue
 		}
 		r, existed := brel[ai.RelOID]
-		if !existed || r.Bytes == 0 {
-			continue // index on a new or empty table: nothing to block
+		if !existed {
+			continue // part of a new table, reported with it
+		}
+		if r.Bytes == 0 {
+			// on an empty table nothing is blocked, but it is still a change
+			d.add(Finding{ID: "index_created", Severity: SevInfo, Object: qual(ai.Schema, ai.Name),
+				Detail: fmt.Sprintf("index %s was created on %s (empty here, so its build could not be sized)", qual(ai.Schema, ai.Name), r.qname())})
+			continue
 		}
 		d.add(Finding{ID: "index_created_on_existing_table", Severity: d.sizeSeverity(r.Bytes), Object: qual(ai.Schema, ai.Name), Bytes: r.Bytes,
 			Detail: fmt.Sprintf("index %s was built on existing table %s (%s); a plain CREATE INDEX blocks writes to the table until the build finishes", qual(ai.Schema, ai.Name), r.qname(), human(r.Bytes)),

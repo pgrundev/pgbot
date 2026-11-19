@@ -26,6 +26,8 @@ separately by `model.SchemaVersion` (currently 1.5.0).
 ### Changed
 - `pgbot schema compare` reports columns one by one (`column`, `column_definition` on
   `schema.table.column`) instead of one `columns` difference per table, and ignores column order.
+- `pgbot schema diff` reports an index built on an existing but empty table as `index_created`
+  (info) instead of nothing, so a review on a copy without data still lists it.
 
 ## [0.10.0] - 2026-11-16
 
