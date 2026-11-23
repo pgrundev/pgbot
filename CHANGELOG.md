@@ -43,6 +43,10 @@ separately by `model.SchemaVersion` (currently 1.5.0).
   your SQL text including literals — to a remote provider without asking. They
   now refuse with a message to re-run with `--yes`; local endpoints still need
   no confirmation (#143).
+- `pgbot explain` with no AI key configured now runs the inspection, prints the
+  deterministic report and marks the AI section unavailable, exiting on the
+  findings' code — as the README documents — instead of exiting 3 with no
+  report before connecting (#156).
 
 ## [0.10.0] - 2026-11-16
 
