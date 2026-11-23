@@ -302,6 +302,10 @@ func pgbotResources() []mcp.Resource {
 			if err != nil {
 				return "", err
 			}
+			if items == nil {
+				// An empty store is an empty array, not JSON null (#157).
+				items = []store.ListItem{}
+			}
 			b, err := json.MarshalIndent(items, "", "  ")
 			if err != nil {
 				return "", err

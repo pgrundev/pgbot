@@ -17,8 +17,26 @@ WHERE con.contype = 'f'
   AND NOT EXISTS (
     SELECT 1 FROM pg_index i
     WHERE i.indrelid = con.conrelid
-      AND i.indpred IS NULL  -- a partial index can't be relied on for FK checks
       AND (string_to_array(i.indkey::text, ' ')::int2[])[1:cardinality(con.conkey)] = con.conkey
+      -- A partial index only covers the FK when the RI lookup provably satisfies
+      -- its predicate. The RI query is `WHERE $1 = fk_col [AND ...]` with strict
+      -- operators, which implies `fk_col IS NOT NULL`, so the planner uses an
+      -- index whose predicate is (a conjunction of) `<fk column> IS NOT NULL`
+      -- (#129). Any other predicate (e.g. `deleted_at IS NULL`) leaves rows the
+      -- RI check must still scan for. Matched on pg_get_expr's deparse, which
+      -- renders these as `(c IS NOT NULL)` / `((a IS NOT NULL) AND (b IS NOT NULL))`;
+      -- anything unrecognised stays "not covering".
+      AND (i.indpred IS NULL OR NOT EXISTS (
+        SELECT 1
+        FROM regexp_split_to_table(
+               substr(pg_get_expr(i.indpred, i.indrelid), 2,
+                      length(pg_get_expr(i.indpred, i.indrelid)) - 2),
+               '\) AND \(') AS conj(term)
+        WHERE btrim(conj.term, '()') NOT IN (
+          SELECT quote_ident(a.attname) || ' IS NOT NULL'
+          FROM unnest(con.conkey) k(attnum)
+          JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.attnum)
+      ))
   )
 ORDER BY child_bytes DESC
 LIMIT 50;

@@ -28,6 +28,15 @@ separately by `model.SchemaVersion` (currently 1.6.0).
   command is unchanged. The `--json` contract is unchanged.
 
 ### Fixed
+- The `pgbot://baselines` MCP resource now reads as an empty JSON array (`[]`)
+  on a store with no snapshots, instead of JSON `null` (#157).
+- `pgbot why` no longer compiles a regexp for every query × table pair while
+  linking queries to tables; the matcher is an allocation-free scan with
+  identical results (~8× faster in the new benchmark) (#142).
+- `fk_unindexed` now counts a partial index on the FK columns as covering when
+  its predicate is `<fk column> IS NOT NULL` (or an `AND` of those), which the
+  RI trigger's `WHERE $1 = fk_col` lookup implies. Partial indexes on any other
+  predicate (e.g. `deleted_at IS NULL`) are still reported (#129).
 - `pgbot sql explain` no longer treats a `$1` inside a dollar-quoted literal
   (`$$ … $$`, `$tag$ … $tag$`) as a parameter placeholder, so the generic-plan
   "parameter values unknown" caveat is no longer shown for such queries (#141).
