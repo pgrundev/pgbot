@@ -29,6 +29,10 @@ type WaitStudy struct {
 	Sessions  []SessionWaits `json:"sessions,omitempty"`             // per-PID rollup
 	Blockers  []Blocker      `json:"blockers,omitempty"`             // sustained evidence only
 	Transient []Blocker      `json:"transient_lock_waits,omitempty"` // seen, but not evidence of a root cause
+	// IO is pg_stat_io over the same window (PG16+): the physical-read latency
+	// that says whether an IO wait is the device or just cache misses served by
+	// the kernel. Nil below PG16 or when the read failed.
+	IO *IOStats `json:"io,omitempty"`
 }
 
 // SessionWaits is one backend's share of the sampled window.

@@ -100,6 +100,52 @@ Don't stall and don't improvise; each gap has one fix:
    concrete recommended step, with its caveat inline.
 3. Briefly name what's healthy, so the user knows what was checked.
 
+## Attribute before you tune
+
+pgbot's findings tell you *which resource* is the limit. Optimize in layers and
+stop at the first one that meets the target — most "we need sharding" cases are a
+missing index, an oversized pool, or starved autovacuum:
+
+```
+query / schema → connections & concurrency → memory / IO / WAL / vacuum → read replicas → partitioning → sharding
+```
+
+Map the evidence to the next hypothesis, and refuse the reflex conclusion:
+
+| pgbot shows | Test next | Do **not** conclude |
+|---|---|---|
+| `io_read_latency_high`, `wait_io_bound`, `low_cache_hit` | which query reads the blocks (`queries`), missing index, bloat; then working set vs `shared_buffers` | "raise shared_buffers" |
+| high CPU, `wait_lwlock_pressure`, no IO finding | expensive plan, too many rows per call, hot-row contention | "buy faster disks" |
+| `work_mem_low` (temp spill) | the spilling query's plan; per-session `work_mem` | "set work_mem = 1GB globally" (`work_mem_overcommit`) |
+| `connection_saturation`, `idle_in_transaction` | pooler in transaction mode; `pgbot tune` prints the Little's-law pool size | "raise max_connections" |
+| `wait_lock_contention`, `blocking_chains` | transaction scope and order, DDL under load | "more CPU" |
+| `checkpoints_forced`, WAL rate spikes | write amplification (indexes per write), bulk updates, `max_wal_size` | "replication is slow" |
+| `autovacuum_starved`, `txid_wraparound` | per-table autovacuum settings, long transactions pinning the horizon | "rewrite the table now" |
+| `replica_lag_time` under analytical reads | replay contention; move heavy reads or size the replica | "replication is broken" |
+| `plan_cache_mode_forced`, `query_slowdown` with unchanged SQL | generic vs custom plan for a skewed parameter | "the index is wrong" |
+| `io_concurrency_low`, `random_page_cost_high` | raise in steps, re-measure `io_stats` latency each step | "max the knob because SSD" |
+
+Every recommendation is one change at a time, tied to the finding and the
+query it serves, with the cost named (write overhead, lock, memory envelope),
+the verification (re-run pgbot / re-read `io_stats`, `queries`) and the rollback
+(`ALTER SYSTEM RESET …`, `DROP INDEX CONCURRENTLY`). Never `fsync = off`,
+`full_page_writes = off`, or slot removal as a performance fix — pgbot flags
+those as risk, and so should you.
+
+## What to ask for (once) and what to hand back
+
+If the user wants tuning rather than a health read, ask at most three things,
+then proceed on stated assumptions: the **workload class** (OLTP / analytics /
+mixed / queue), the **latency target** (p99 in ms) and error budget, and the
+**topology** (pooler? replicas? partitioned/sharded? managed provider?). pgbot
+supplies the rest (version, settings, extensions, top queries, waits, IO,
+vacuum, replication).
+
+Hand back, in this order: the bottleneck attribution with pgbot's numbers →
+ranked hypotheses (largest expected effect first) → for each, the change, its
+cost, how to verify, how to roll back. pgbot is the **observe** layer; the
+experiment and rollout belong to the user and their tooling.
+
 ## Reading the signals
 
 - **`tables`:** a large table with heavy `seq scans` and few `idx scans` is a
@@ -110,7 +156,15 @@ Don't stall and don't improvise; each gap has one fix:
 - **`vacuum`:** `due? yes` with a stale/`never` last-autovacuum means autovacuum
   is falling behind — the early signal for bloat and, downstream, wraparound.
 - **replication-slot findings:** an inactive slot retaining WAL fills the disk;
-  treat it as time-to-incident, not cosmetic.
+  treat it as time-to-incident, not cosmetic. `slot_wal_keep_unbounded` is the
+  missing ceiling that lets it happen.
+- **`io_stats` (`--json`, PG16+):** `read_latency_ms` is the storage verdict —
+  microseconds means the kernel page cache served the miss, milliseconds means
+  the device did. `reads_in_window` is the denominator; don't trust a mean over
+  a few hundred reads.
+- **`tune` pool line:** average busy backends = pg_stat_statements total time ÷
+  window (Little's law). A server pool of ~3× that is the starting point; the
+  pooler's waiting-clients count, not `max_connections`, says if it's right.
 
 ## Safety and privacy
 

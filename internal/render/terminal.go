@@ -530,6 +530,14 @@ func renderInfra(b *strings.Builder, st styler, c *model.Context) {
 		fmt.Fprintf(b, "%s   %s   buffers written %s/s · checkpoints %d timed / %d req\n",
 			st.head("IO"), st.dim(c.IO.Exactness), f2(c.IO.BuffersWrittenPerS, humanNum), c.IO.CheckpointsTimed, c.IO.CheckpointsReq)
 	}
+	if io := c.IOStats; io != nil && io.Exactness == model.ExactnessSampled && io.ReadsPerSec != nil {
+		lat := "latency n/a (track_io_timing off)"
+		if io.TrackIOTiming {
+			lat = "read latency " + f2(io.ReadLatencyMS, func(v float64) string { return fmt.Sprintf("%.2f ms", v) })
+		}
+		fmt.Fprintf(b, "%s   %s   physical reads %s/s · writes %s/s · %s\n",
+			st.head("IO"), st.dim("pg_stat_io"), f2(io.ReadsPerSec, humanNum), f2(io.WritesPerSec, humanNum), lat)
+	}
 	if c.Replication != nil && c.Replication.Exactness == model.ExactnessScraped {
 		if c.Replication.IsReplica {
 			fmt.Fprintf(b, "%s  %s   replica · receiver lag %s\n", st.head("REPLICATION"), st.dim("scraped"), f2(c.Replication.ReceiverLagSec, func(v float64) string { return fmt.Sprintf("%.1fs", v) }))

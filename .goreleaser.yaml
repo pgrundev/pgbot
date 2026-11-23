@@ -77,14 +77,14 @@ nfpms:
 
 dockers:
   - image_templates:
-      - "ghcr.io/pgrundev/pgbot:{{ .Version }}-amd64"
+      - "{{ .Env.IMAGE_REPO | tolower }}:{{ .Version }}-amd64"
     dockerfile: Dockerfile
     use: buildx
     build_flag_templates:
       - "--platform=linux/amd64"
     goarch: amd64
   - image_templates:
-      - "ghcr.io/pgrundev/pgbot:{{ .Version }}-arm64"
+      - "{{ .Env.IMAGE_REPO | tolower }}:{{ .Version }}-arm64"
     dockerfile: Dockerfile
     use: buildx
     build_flag_templates:
@@ -95,14 +95,14 @@ dockers:
 # :latest) works on Apple Silicon / Graviton, not just amd64. The README lists
 # Docker as a first-class install method and uses the bare (:latest) tag.
 docker_manifests:
-  - name_template: "ghcr.io/pgrundev/pgbot:{{ .Version }}"
+  - name_template: "{{ .Env.IMAGE_REPO | tolower }}:{{ .Version }}"
     image_templates:
-      - "ghcr.io/pgrundev/pgbot:{{ .Version }}-amd64"
-      - "ghcr.io/pgrundev/pgbot:{{ .Version }}-arm64"
-  - name_template: "ghcr.io/pgrundev/pgbot:latest"
+      - "{{ .Env.IMAGE_REPO | tolower }}:{{ .Version }}-amd64"
+      - "{{ .Env.IMAGE_REPO | tolower }}:{{ .Version }}-arm64"
+  - name_template: "{{ .Env.IMAGE_REPO | tolower }}:latest"
     image_templates:
-      - "ghcr.io/pgrundev/pgbot:{{ .Version }}-amd64"
-      - "ghcr.io/pgrundev/pgbot:{{ .Version }}-arm64"
+      - "{{ .Env.IMAGE_REPO | tolower }}:{{ .Version }}-amd64"
+      - "{{ .Env.IMAGE_REPO | tolower }}:{{ .Version }}-arm64"
 
 # Homebrew formula, pushed to the pgrundev/homebrew-tap repo so
 # `brew install pgrundev/tap/pgbot` works (issue #8). The workflow's GITHUB_TOKEN
@@ -145,9 +145,8 @@ brews:
       system bin/"pgbot", "--version"
 
 release:
-  github:
-    owner: pgrundev
-    name: pgbot
+  # No explicit github.owner/name: goreleaser publishes to the repository the
+  # workflow runs in, so a fork's tag releases on the fork.
   prerelease: auto
   # Publish the JSON Schema for the --json contracts as release assets, so a
   # consumer can pin against a version (B7-2). The files are generated from the
