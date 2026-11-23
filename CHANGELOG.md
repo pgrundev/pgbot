@@ -7,6 +7,8 @@ separately by `model.SchemaVersion` (currently 1.6.0).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-23
+
 ### Added
 - **`pgbot monitor` — PgBot Monitor, scheduled checks with macOS notifications
   (macOS only).** One interactive command sets up read-only health checks on a
@@ -856,6 +858,8 @@ separately by `model.SchemaVersion` (currently 1.6.0).
   1.25.13, and golang.org/x/text to v0.39.0; `govulncheck` now runs in CI and
   reports no vulnerabilities.
 
+[0.11.0]: https://github.com/pgrundev/pgbot/releases/tag/v0.11.0
+[0.10.0]: https://github.com/pgrundev/pgbot/releases/tag/v0.10.0
 [0.9.0]: https://github.com/pgrundev/pgbot/releases/tag/v0.9.0
 [0.8.1]: https://github.com/pgrundev/pgbot/releases/tag/v0.8.1
 [0.8.0]: https://github.com/pgrundev/pgbot/releases/tag/v0.8.0
