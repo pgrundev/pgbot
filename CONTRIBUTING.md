@@ -24,6 +24,11 @@ docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=pw postgres:18 -c shared_preload
 PGBOT_TEST_SUPERUSER_DSN=postgres://postgres:pw@127.0.0.1:5432/postgres go test ./internal/collect/ -run Integration
 ```
 
+The advisor schema integration test additionally requires PostgreSQL 16+ and the
+server-side HypoPG package (for example, `postgresql-18-hypopg`). CI installs it
+before the integration suite; the test creates the extension in its own disposable
+database and does not skip a missing extension on supported PostgreSQL versions.
+
 CI also runs `gofmt -l`, `go vet`, `go test -race`, `golangci-lint`, and
 `govulncheck`; keep them green.
 

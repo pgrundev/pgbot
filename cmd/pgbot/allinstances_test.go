@@ -50,6 +50,16 @@ func TestPartialCoverageExit(t *testing.T) {
 	}
 }
 
+// #98: a skipped database under plain --all-databases is partial coverage too.
+func TestFanoutExitFailsOnAnySkippedTarget(t *testing.T) {
+	if fanoutExit(exitClean, 1) != exitFailure {
+		t.Error("one skipped target must fail an otherwise clean run")
+	}
+	if fanoutExit(exitClean, 0) != exitClean || fanoutExit(exitCritical, 0) != exitCritical {
+		t.Error("full coverage must keep the findings' exit code")
+	}
+}
+
 func instanceContext(id, role, db string, findingIDs ...string) *model.Context {
 	c := &model.Context{}
 	c.Server.Instance, c.Server.InstanceRole, c.Server.Database = id, role, db
