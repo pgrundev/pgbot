@@ -129,3 +129,30 @@ func TestWhyTool(t *testing.T) {
 		t.Error("the tool must carry its caveat note for the agent")
 	}
 }
+
+// pgbot://baselines on a fresh store must be an empty JSON array, not null —
+// the same shape as a populated store, so clients can iterate it (#157).
+func TestBaselinesResource_emptyStoreIsArray(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	res := pgbotResources()
+	if len(res) != 1 || res[0].URI != "pgbot://baselines" {
+		t.Fatalf("unexpected resources: %+v", res)
+	}
+	out, err := res[0].Read(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "[]" {
+		t.Fatalf("empty store should read as [], got %q", out)
+	}
+
+	seedWhyFixture(t)
+	out, err = res[0].Read(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var items []map[string]any
+	if err := json.Unmarshal([]byte(out), &items); err != nil || len(items) == 0 {
+		t.Fatalf("populated store should read as a non-empty array (err=%v): %s", err, out)
+	}
+}
