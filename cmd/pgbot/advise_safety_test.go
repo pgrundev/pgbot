@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -107,8 +108,14 @@ func TestIntegration_advisorTargetsResolvedNonPublicSchema(t *testing.T) {
 	}
 	defer func() { _ = fixture.Close() }()
 
+	// HypoPG is packaged for released PostgreSQL versions only (not betas).
+	if _, err := fixture.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS hypopg`); err != nil {
+		if strings.Contains(err.Error(), "is not available") {
+			t.Skip("hypopg is not installed on this server")
+		}
+		t.Fatalf("create hypopg: %v", err)
+	}
 	for _, stmt := range []string{
-		`CREATE EXTENSION IF NOT EXISTS hypopg`,
 		`CREATE SCHEMA pgbot_advise_schema_it`,
 		`CREATE TABLE pgbot_advise_schema_it.pgbot_same_name_it (customer_id integer NOT NULL, payload text)`,
 		`CREATE TABLE public.pgbot_same_name_it (customer_id integer NOT NULL, payload text)`,
