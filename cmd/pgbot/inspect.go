@@ -139,31 +139,8 @@ func runInspect(cmd *cobra.Command, args []string, f inspectFlags) error {
 	if f.rawQueries {
 		fmt.Fprintln(os.Stderr, "pgbot: --raw-query-text is set — blocking-chain query text is NOT scrubbed and may contain literal values (PII).")
 	}
-	c, err := collect.Run(ctx, target, collect.Options{
-		Interval: f.interval, RawQueryText: f.rawQueries, ASHHz: f.ashHz, ASHWindow: f.window, Deadline: f.timeout,
-		SchemaOnly: f.schemaProfile(),
-	})
+	c, trends, baselinePath, err := collectAndAnalyze(ctx, target, f)
 	if err != nil {
-		return fmt.Errorf("collect: %s", conn.RedactConnString(err.Error()))
-	}
-	c.Server.ViaPooler = target.Pooler.Detected
-
-	// Fingerprint the target so baselines survive host/rename changes.
-	host, port := hostPort(target)
-	c.Fingerprint = store.Fingerprint(host, port, c.Server.Database, target.Caps.SystemIdentifier)
-
-	// Baseline: diff against history, then persist this run. Store trouble is
-	// non-fatal — a broken local DB must never stop a health report.
-	var trends map[string][]float64
-	var baselinePath string
-	if !f.noStore {
-		trends, baselinePath = withStore(f.storePath, c)
-	}
-
-	// Deterministic findings — computed in Go, never by a model. Under the active
-	// .pgbot.toml: threshold overrides feed the compute, severity/ignore rules are
-	// applied, suppressed findings are kept (marked) for the renderer.
-	if err := computeFindings(c, f); err != nil {
 		return err
 	}
 
@@ -194,6 +171,41 @@ func runInspect(cmd *cobra.Command, args []string, f inspectFlags) error {
 
 	os.Exit(exitCode(c.Findings, f.failOn))
 	return nil
+}
+
+// collectAndAnalyze is the inspect pipeline after connect: collect, fingerprint,
+// baseline (diff + persist), then the deterministic findings under the active
+// .pgbot.toml. Shared by `inspect` and `monitor` so both see identical findings.
+func collectAndAnalyze(ctx context.Context, target *conn.Target, f inspectFlags) (*model.Context, map[string][]float64, string, error) {
+	c, err := collect.Run(ctx, target, collect.Options{
+		Interval: f.interval, RawQueryText: f.rawQueries, ASHHz: f.ashHz, ASHWindow: f.window, Deadline: f.timeout,
+		SchemaOnly: f.schemaProfile(),
+	})
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("collect: %s", conn.RedactConnString(err.Error()))
+	}
+	c.Server.ViaPooler = target.Pooler.Detected
+
+	// Fingerprint the target so baselines survive host/rename changes.
+	host, port := hostPort(target)
+	c.Fingerprint = store.Fingerprint(host, port, c.Server.Database, target.Caps.SystemIdentifier)
+
+	// Baseline: diff against history, then persist this run. Store trouble is
+	// non-fatal — a broken local DB must never stop a health report.
+	var trends map[string][]float64
+	var baselinePath string
+	if !f.noStore {
+		trends, baselinePath = withStore(f.storePath, c)
+	}
+
+	// Deterministic findings — computed in Go, never by a model. Under the active
+	// .pgbot.toml: threshold overrides feed the compute, severity/ignore rules are
+	// applied, suppressed findings are kept (marked) for the renderer.
+	if err := computeFindings(c, f); err != nil {
+		return nil, nil, "", err
+	}
+
+	return c, trends, baselinePath, nil
 }
 
 // withStore loads the baseline (for Deltas + sparkline trends) and persists this

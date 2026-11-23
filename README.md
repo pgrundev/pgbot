@@ -255,6 +255,7 @@ Every command takes the connection the same way — an argument, `$DATABASE_URL`
 | `ask "…"` · `explain` | a plain-language AI reading of the same deterministic findings |
 | `explain-finding <id>` | the catalogue page for a finding, offline |
 | `mcp` | serve the findings to an AI agent over MCP |
+| `monitor` | scheduled checks with native notifications on your Mac (macOS only) — see [PgBot Monitor](#pgbot-monitor--macos-notifications) |
 | `config` · `baselines` | manage `.pgbot.toml` and the local baseline store |
 
 Key `inspect` flags:
@@ -1082,6 +1083,106 @@ of reach over SQL — that's their boundary, not a pgbot flag away.
 > connectable database on the server. Cluster-wide findings (settings, replication,
 > archiving, wraparound) are reported once; per-database findings appear per
 > database. Serial by default (`--parallel N` to fan out).
+
+## PgBot Monitor — macOS notifications
+
+One command turns pgbot into a personal health assistant for one database:
+
+```
+pgbot monitor
+```
+
+It walks you through setup — pick up `$DATABASE_URL` (or paste a URL, input
+hidden), choose how often to check, choose what's worth a notification — then
+checks on a schedule and tells you in Notification Center when something
+changes. No daemon, no cloud, no account, no API key, nothing installed in your
+database.
+
+```
+🐘 PgBot Monitor
+─────────────────────────────────
+✓ Database connection found
+  Host            db.example.com
+  Database        production
+Use this database? [Y/n]
+✓ Connected successfully!   PostgreSQL 18.1 · Read-only sessions · pg_monitor ✓
+
+How often should I check your database?
+    1. Every hour
+    2. Every 6 hours
+  ❯ 3. Every day (Recommended)
+    4. Every week
+…
+🐘 PgBot is watching your Postgres!
+Health score: 98/100 · Next check: Tomorrow at 9:00 AM
+You can safely close this terminal.
+```
+
+A notification looks like:
+
+> **⚠️ PgBot · Production needs attention**
+> Health 82/100. Connection usage reached 87%. Queries are 3.2× slower.
+
+**What you're told about.** By default (*Important changes only*): a new warning
+or critical, a warning that becomes critical, issues that resolve, and the
+database becoming unreachable or reachable again — once each, never the same
+unchanged problem on every run. *Critical issues only* narrows that to
+criticals and connectivity; *Every health check* sends a summary after each
+run. Findings are compared by finding id + object, the same identity
+`.pgbot.toml` `[[ignore]]` rules use, and suppressed findings never notify. Every
+number in a notification comes from the same deterministic findings and health
+score `pgbot inspect` prints; a check that couldn't see everything (for example
+a role without `pg_monitor`) never claims "healthy".
+
+| Command | |
+|---|---|
+| `pgbot monitor status` | state, last result, next check, recent activity |
+| `pgbot monitor now` | run a check immediately |
+| `pgbot monitor test` | send a test notification |
+| `pgbot monitor edit` | change database, schedule or notifications |
+| `pgbot monitor pause` · `resume` | stop / restart the schedule, keeping settings (`resume` also repairs a moved pgbot binary) |
+| `pgbot monitor stop` | remove the schedule; asks whether to delete settings and the saved connection (`--purge` to do so non-interactively) |
+
+**How scheduling works.** Setup installs a per-user launchd LaunchAgent,
+`~/Library/LaunchAgents/dev.pgbot.monitor.plist`, which starts
+`pgbot monitor _run`; it runs one inspection, compares it with the previous one,
+notifies if needed, and exits. Hourly and 6-hourly checks use `StartInterval`;
+daily and weekly use `StartCalendarInterval` in your Mac's time zone (9:00 AM
+stays 9:00 AM across daylight saving). No `sudo`, no background process between
+checks. The schedule points at a durable pgbot path — running from an `npx`
+cache is refused with install instructions (`brew install pgrundev/tap/pgbot`
+or `npm i -g @pgbot/cli`).
+
+**When your Mac is asleep or off.** Checks only run while the Mac is awake and
+you're logged in. A daily or weekly check missed during sleep runs once on
+wake; hourly and 6-hourly checks skip the missed interval and continue on the
+next one. Nothing runs while the Mac is off or you're logged out. This is a scheduled check-up from your
+laptop, **not** 24/7 server monitoring — for paging on production, use a
+server-side monitoring system (pgbot's `--format=prometheus` can feed one).
+
+**Enabling notifications.** Banners come from **PgBot** — with the elephant
+icon — via a tiny helper app pgbot builds on first use at
+`~/Library/Application Support/PgBot/PgBot.app` (an AppleScript applet made with
+the tools that ship with macOS; nothing is downloaded). The first banner makes
+macOS ask whether PgBot may send notifications: click **Allow**. If
+`pgbot monitor test` shows nothing: System Settings → Notifications → PgBot →
+Allow Notifications, and check that a Focus mode isn't silencing it. (If the
+helper can't be built, pgbot falls back to `osascript`, and banners appear under
+**Script Editor** instead.) pgbot can tell that macOS *accepted* a notification,
+never that you *saw* it — setup asks you.
+
+**Credentials.** The connection string is stored only in your login Keychain
+(service `dev.pgbot.monitor`), with your explicit consent during setup. It is
+never written to the plist, config, state, logs or a command line. Non-secret
+settings live in `~/Library/Application Support/PgBot/monitor/` (`config.json`,
+`state.json`, mode 0600); the log is `~/Library/Logs/PgBot/monitor.log` (kept
+small, secrets redacted). `~/.pgpass` and `PGSERVICE` connections keep working:
+their file locations are remembered, not their contents. Access stays read-only
+— the same role and read-only sessions as `pgbot inspect`.
+
+**Uninstall.** `pgbot monitor stop --purge` removes the LaunchAgent, the
+Keychain item, the PgBot.app notifier and the monitor's settings. Your baseline history (used by
+`inspect`, `diff`, `why`) is left alone.
 
 ## CI integration
 
