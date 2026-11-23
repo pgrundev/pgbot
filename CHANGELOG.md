@@ -7,6 +7,26 @@ separately by `model.SchemaVersion` (currently 1.5.0).
 
 ## [Unreleased]
 
+### Added
+- **`pgbot monitor` — PgBot Monitor, scheduled checks with macOS notifications
+  (macOS only).** One interactive command sets up read-only health checks on a
+  schedule (every hour, every 6 hours, daily or weekly at a chosen time) and
+  posts Notification Center banners when something changes: new or escalated
+  warnings/criticals, recoveries, and connection loss/restore — never the same
+  unchanged problem twice. Scheduling is a user launchd LaunchAgent
+  (`dev.pgbot.monitor`) that runs `pgbot monitor _run` and exits; no daemon. The
+  connection string is kept only in the login Keychain (written via
+  `/usr/bin/security` over stdin, never in argv, files, the plist or logs). Checks
+  run the same inspect pipeline (collect → baseline store → findings under
+  `.pgbot.toml`) and use the same health score; suppressed findings never notify.
+  Banners are posted by a small `PgBot.app` notifier (built locally with
+  `osacompile`, carrying the PgBot elephant icon and its own bundle id), so they
+  show PgBot's name and icon and get their own entry in System Settings →
+  Notifications; plain `osascript` is the fallback.
+  Management: `monitor status | now | test | edit | pause | resume | stop`.
+  Other platforms get "PgBot Monitor currently supports macOS only"; every other
+  command is unchanged. The `--json` contract is unchanged.
+
 ## [0.10.0] - 2026-11-16
 
 ### Added
