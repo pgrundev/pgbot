@@ -28,6 +28,9 @@ separately by `model.SchemaVersion` (currently 1.6.0).
   command is unchanged. The `--json` contract is unchanged.
 
 ### Fixed
+- `inspect --all-databases` now exits 3 when any database could not be
+  inspected (#98); previously only `--all-instances` reported partial coverage
+  in the exit code, so a script could mistake a partial run for a full one.
 - `collation_version_mismatch` no longer warns about collations nothing uses
   (#130). After an ICU upgrade it listed all ~870 built-in ICU collations in
   every database. Unused ones are now one `info` line. Mismatches in `--json`
