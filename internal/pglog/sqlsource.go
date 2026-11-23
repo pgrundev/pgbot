@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path"
 
+	"github.com/pgrundev/pgbot/internal/conn"
 	"github.com/pgrundev/pggo"
 )
 
@@ -97,5 +98,5 @@ func (s *SQLSource) ReadAt(ctx context.Context, name string, off, length int64) 
 // printed when the server refuses the read.
 func ReadGrantSQL(user string) string {
 	return fmt.Sprintf(
-		"GRANT EXECUTE ON FUNCTION pg_read_binary_file(text, bigint, bigint, boolean) TO %s;", user)
+		"GRANT EXECUTE ON FUNCTION pg_read_binary_file(text, bigint, bigint, boolean) TO %s;", conn.QuoteIdent(user))
 }
