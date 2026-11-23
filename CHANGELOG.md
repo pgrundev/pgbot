@@ -30,6 +30,9 @@ separately by `model.SchemaVersion` (currently 1.5.0).
 ### Fixed
 - The `pgbot://baselines` MCP resource now reads as an empty JSON array (`[]`)
   on a store with no snapshots, instead of JSON `null` (#157).
+- `pgbot why` no longer compiles a regexp for every query × table pair while
+  linking queries to tables; the matcher is an allocation-free scan with
+  identical results (~8× faster in the new benchmark) (#142).
 
 ## [0.10.0] - 2026-11-16
 

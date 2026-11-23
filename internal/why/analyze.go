@@ -2,10 +2,11 @@ package why
 
 import (
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/pgrundev/pgbot/internal/model"
 )
@@ -328,9 +329,84 @@ func referencedTables(samples []Sample, queryText string) []string {
 
 // referencesTable reports whether the normalized query text mentions the table
 // name as a whole identifier (word-bounded, case-insensitive).
+//
+// It is exactly `(?i)\b<QuoteMeta(table)>\b` (Go regexp semantics: \b is an
+// ASCII [0-9A-Za-z_] boundary, (?i) is Unicode simple case folding) without
+// compiling a regexp per call — it runs samples × tables × shifted queries
+// (#142). FuzzReferencesTable pins the equivalence.
 func referencesTable(queryText, table string) bool {
-	re := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(table) + `\b`)
-	return re.MatchString(queryText)
+	if table == "" {
+		// \b\b: any word boundary, i.e. any ASCII word byte in the text.
+		for i := 0; i < len(queryText); i++ {
+			if isASCIIWordByte(queryText[i]) {
+				return true
+			}
+		}
+		return false
+	}
+	for i := 0; i < len(queryText); {
+		if n, ok := foldPrefix(queryText[i:], table); ok &&
+			atWordBoundary(queryText, i) && atWordBoundary(queryText, i+n) {
+			return true
+		}
+		if queryText[i] < utf8.RuneSelf {
+			i++
+		} else {
+			_, w := utf8.DecodeRuneInString(queryText[i:])
+			i += w
+		}
+	}
+	return false
+}
+
+// foldPrefix reports whether s starts with t under Unicode simple case
+// folding, returning the byte length of the matched prefix of s.
+func foldPrefix(s, t string) (int, bool) {
+	i := 0
+	for _, tr := range t {
+		if i >= len(s) {
+			return 0, false
+		}
+		sr, w := rune(s[i]), 1
+		if sr >= utf8.RuneSelf {
+			sr, w = utf8.DecodeRuneInString(s[i:])
+		}
+		if !equalFoldRune(sr, tr) {
+			return 0, false
+		}
+		i += w
+	}
+	return i, true
+}
+
+// equalFoldRune is the regexp (?i) rune test: r and t are in the same
+// unicode.SimpleFold orbit.
+func equalFoldRune(r, t rune) bool {
+	if r == t {
+		return true
+	}
+	if r < utf8.RuneSelf && t < utf8.RuneSelf {
+		return r|0x20 == t|0x20 && r|0x20 >= 'a' && r|0x20 <= 'z'
+	}
+	for f := unicode.SimpleFold(t); f != t; f = unicode.SimpleFold(f) {
+		if f == r {
+			return true
+		}
+	}
+	return false
+}
+
+// atWordBoundary is regexp's \b at byte offset i: exactly one side is an
+// ASCII word character. Word characters are single bytes, so looking at the
+// neighbouring bytes is enough (UTF-8 lead/continuation bytes are >= 0x80).
+func atWordBoundary(s string, i int) bool {
+	before := i > 0 && isASCIIWordByte(s[i-1])
+	after := i < len(s) && isASCIIWordByte(s[i])
+	return before != after
+}
+
+func isASCIIWordByte(c byte) bool {
+	return c == '_' || c >= '0' && c <= '9' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z'
 }
 
 // tableGrowthPct is first-to-last relative growth of the table's total bytes.
