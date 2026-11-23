@@ -46,6 +46,35 @@ func TestCandidatesFromPlan_seqScanOnly(t *testing.T) {
 	}
 }
 
+func TestCandidatesFromPlan_requiresResolvedSchema(t *testing.T) {
+	t.Run("schema-less plan fails closed", func(t *testing.T) {
+		root, err := parsePlan([]byte(`[{
+			"Plan":{"Node Type":"Seq Scan","Relation Name":"orders",
+			"Filter":"(customer_id = $1)","Total Cost":4040.0}
+		}]`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := candidatesFromPlan(root); len(got) != 0 {
+			t.Fatalf("schema-less plan must not invent a target schema, got %+v", got)
+		}
+	})
+
+	t.Run("verbose qualified filter retains non-public schema", func(t *testing.T) {
+		root, err := parsePlan([]byte(`[{
+			"Plan":{"Node Type":"Seq Scan","Relation Name":"orders","Schema":"tenant_data",
+			"Filter":"(orders.customer_id = $1)","Total Cost":4040.0}
+		}]`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := candidatesFromPlan(root)
+		if len(got) != 1 || got[0].DDL() != "CREATE INDEX ON tenant_data.orders (customer_id)" {
+			t.Fatalf("wrong candidate from verbose plan: %+v", got)
+		}
+	})
+}
+
 func TestUsesIndex(t *testing.T) {
 	js := []byte(`[{"Plan":{"Node Type":"Index Scan","Index Name":"<13337>btree_orders_customer_id","Total Cost":52.0}}]`)
 	root, _ := parsePlan(js)
