@@ -28,6 +28,25 @@ separately by `model.SchemaVersion` (currently 1.6.0).
   command is unchanged. The `--json` contract is unchanged.
 
 ### Fixed
+- `pgbot sql explain` no longer treats a `$1` inside a dollar-quoted literal
+  (`$$ … $$`, `$tag$ … $tag$`) as a parameter placeholder, so the generic-plan
+  "parameter values unknown" caveat is no longer shown for such queries (#141).
+- `pgbot sql explain --json --ai` is now refused as a usage error (exit 64)
+  instead of printing the raw plan and silently dropping the requested AI
+  explanation — after already asking consent to send the SQL (#139).
+- `pgbot sql explain --ai` no longer labels the query plan as "the findings
+  above" in the AI section's footer and fallback note; it now refers to the
+  query plan that was actually printed (#140).
+- **AI consent now defaults to NO when stdin is not a terminal.** `pgbot sql
+  explain --ai`, `pgbot explain` and `pgbot ask` treated a non-TTY stdin (CI,
+  pipes, containers, agent shells) as consent and sent data — for `sql explain`,
+  your SQL text including literals — to a remote provider without asking. They
+  now refuse with a message to re-run with `--yes`; local endpoints still need
+  no confirmation (#143).
+- `pgbot explain` with no AI key configured now runs the inspection, prints the
+  deterministic report and marks the AI section unavailable, exiting on the
+  findings' code — as the README documents — instead of exiting 3 with no
+  report before connecting (#156).
 - `inspect --all-databases` now exits 3 when any database could not be
   inspected (#98); previously only `--all-instances` reported partial coverage
   in the exit code, so a script could mistake a partial run for a full one.

@@ -1,9 +1,22 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
+
+// --json prints machine-readable EXPLAIN output, so it cannot also carry the
+// --ai prose; the combination is refused as a usage error before a model is
+// resolved, consent is asked, or a connection is made (#139).
+func TestSQLExplainRejectsJSONWithAI(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://u@127.0.0.1:1/none")
+	err := runSQLExplain(nil, []string{"SELECT 1"}, sqlExplainFlags{jsonOut: true, useAI: true})
+	var ue usageError
+	if !errors.As(err, &ue) || !strings.Contains(err.Error(), "--json") || !strings.Contains(err.Error(), "--ai") {
+		t.Fatalf("--json --ai: want a usage error naming both flags, got %v", err)
+	}
+}
 
 func TestResolveSQLExplainInput(t *testing.T) {
 	t.Setenv("DATABASE_URL", "")

@@ -223,7 +223,8 @@ func firstNonEmpty(vals ...string) string {
 
 // HasPlaceholders reports whether the query uses $N parameter placeholders
 // outside string literals — the case where a GENERIC_PLAN's "parameter values
-// unknown" caveat applies.
+// unknown" caveat applies. Both '…' and dollar-quoted ($$…$$, $tag$…$tag$)
+// literals are skipped.
 func HasPlaceholders(q string) bool {
 	inLiteral := false
 	for i := 0; i < len(q); i++ {
@@ -238,6 +239,31 @@ func HasPlaceholders(q string) bool {
 		if i+1 < len(q) && q[i+1] >= '0' && q[i+1] <= '9' {
 			return true
 		}
+		if tag := dollarQuoteTag(q[i:]); tag != "" {
+			end := strings.Index(q[i+len(tag):], tag)
+			if end < 0 {
+				return false // unterminated: the rest is the literal's body
+			}
+			i += len(tag) + end + len(tag) - 1
+		}
 	}
 	return false
+}
+
+// dollarQuoteTag returns the opening delimiter of a dollar-quoted literal at the
+// start of s — "$$" or "$tag$", where tag is an identifier that does not start
+// with a digit — or "" when s does not start one.
+func dollarQuoteTag(s string) string {
+	for j := 1; j < len(s); j++ {
+		c := s[j]
+		switch {
+		case c == '$':
+			return s[:j+1]
+		case c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= 0x80:
+		case c >= '0' && c <= '9' && j > 1:
+		default:
+			return ""
+		}
+	}
+	return ""
 }
