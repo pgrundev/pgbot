@@ -1,7 +1,7 @@
 ---
 id: sequence_exhaustion
 severity: warn
-critical_when: "a sequence is ≥90% consumed"
+critical_when: "recorded position is ≥90% toward the effective terminal bound"
 dimension: risk
 object: relation
 scope: workload
@@ -12,35 +12,56 @@ related: [txid_wraparound]
 
 # sequence_exhaustion
 
-**Severity:** warn (critical when a sequence is ≥90% consumed) · **Dimension:** risk · **Object identity:** `schema.sequence` (see [configuration](../configuration.md)) · **Requires:** —
+**Severity:** warn (critical when recorded position is ≥90% toward the effective terminal bound) · **Dimension:** risk · **Object identity:** `schema.sequence` (see [configuration](../configuration.md)) · **Requires:** —
 
 ## What pgbot observed
 
-At least one sequence has consumed **≥80%** of its usable range (`warn`), or
-**≥90%** (`critical`). pgbot measures usage as `last_value / min(max_value, column
-type max)` — the second term matters: an `int4` identity/`serial` column wraps at
-**2,147,483,647** even when the sequence's own `max_value` is the `int8` ceiling,
-because the value has to fit the column.
+At least one non-cycling sequence, or a cycling sequence narrowed by its owning
+integer column, has a recorded position **≥80%** toward its effective terminal
+bound (`warn`), or **≥90%** (`critical`). For an ascending sequence pgbot measures
+`(last_value - floor) / (ceiling - floor)`; for a descending sequence it measures
+`(ceiling - last_value) / (ceiling - floor)`.
+
+The effective floor and ceiling are the intersection of the sequence's configured
+range and an owning `int2`/`int4` column's representable range. This catches both
+the familiar ascending `int4` ceiling and a descending floor. It also catches a
+cycling sequence whose opposite wrap value cannot fit its owning column.
 
 ## Why it matters
 
-When a sequence reaches its ceiling, the very next `nextval()` raises
-`nextval: reached maximum value of sequence`. Every `INSERT` that depends on it
-then fails — a write outage for any table using that sequence as its primary key.
-There is no gradual degradation; it works until the instant it doesn't.
+A non-cycling sequence eventually rejects `nextval()` after it reaches its
+terminal bound. A column-limited sequence can instead produce a value that the
+owning column cannot represent, either before the sequence reaches its own bound
+or after a cycle wraps to the opposite end. Inserts that depend on it can then
+fail.
+
+This is a bounds-position heuristic, not a countdown. `pg_sequences.last_value`
+is the value written to disk and can run ahead of values handed out when sequence
+caching is enabled. The percentage therefore does not state an exact number of
+calls remaining or when an insert will fail.
 
 ## How to verify it yourself
 
 ```sql
--- Usage against each sequence's own max_value. Watch the int4 caveat below:
--- a serial/identity column on int4 really wraps at 2.1e9, not max_value.
-SELECT schemaname || '.' || sequencename        AS sequence,
+-- Position within each sequence's configured range. Check owning-column bounds
+-- separately below; they may narrow this range.
+SELECT schemaname || '.' || sequencename AS sequence,
        last_value,
+       min_value,
        max_value,
-       round(100.0 * last_value / max_value, 2)  AS pct_used
+       increment_by,
+       cycle,
+       round(100.0 * CASE
+         WHEN increment_by > 0 THEN
+           (last_value::numeric - min_value::numeric) /
+             nullif(max_value::numeric - min_value::numeric, 0)
+         ELSE
+           (max_value::numeric - last_value::numeric) /
+             nullif(max_value::numeric - min_value::numeric, 0)
+       END, 2) AS pct_through_range
 FROM pg_sequences
 WHERE last_value IS NOT NULL
-ORDER BY pct_used DESC NULLS LAST
+ORDER BY pct_through_range DESC NULLS LAST, schemaname, sequencename
 LIMIT 20;
 ```
 
@@ -59,7 +80,9 @@ WHERE a.attnum > 0 AND NOT a.attisdropped
 
 ## How to fix it
 
-Widen the owning column to `bigint`. `ALTER TABLE … ALTER COLUMN … TYPE bigint`
+First inspect the sequence's `INCREMENT`, `MINVALUE`, `MAXVALUE`, and `CYCLE`
+settings together with the owning column type. For an owner-limited `int2` or
+`int4` column, widen it to `bigint`. `ALTER TABLE … ALTER COLUMN … TYPE bigint`
 rewrites the whole table under an `ACCESS EXCLUSIVE` lock — acceptable for a small
 table in a maintenance window, but for a large, hot table do it **online** instead.
 (`pg_repack` can rewrite a bloated table but **cannot** change a column's type, so
@@ -86,22 +109,22 @@ WHERE c.contype = 'f'
   AND t.typname = 'int4';
 ```
 
-If the column is **already `bigint`**, exhaustion is astronomically far off
-(9.2×10¹⁸) and the finding is almost certainly noise from a sequence whose
-`max_value` was set low by hand — raise `max_value` or ignore it.
+For a sequence that is not column-limited, changing its range or cycle mode can
+affect application uniqueness assumptions. Treat that as a key-design change,
+not a mechanical way to silence the finding.
 
 ## When to ignore it
 
-You've confirmed a **specific** sequence is `bigint`-backed, so its wrap is
-astronomically far off. Scope the rule to that sequence by name — a new `int4`
-serial that crosses the threshold tomorrow still surfaces, because the rule only
-drops this one object:
+You've confirmed a **specific** sequence's configured terminal behavior is safe
+for its application and its owning column. Scope the rule to that sequence by
+name — another sequence that crosses the threshold tomorrow still surfaces,
+because the rule only drops this one object:
 
 ```toml
 [[ignore]]
 finding = "sequence_exhaustion"
 object  = "public.legacy_events_id_seq"
-reason  = "already bigint; wrap is astronomically far off"
+reason  = "bounds and cycle behavior reviewed with the key allocation design"
 expires = "2027-01-01"
 ```
 
@@ -111,8 +134,11 @@ future `int4` overflow gets hidden.
 
 ## What pgbot cannot see
 
-- It reads `last_value`, which lags under concurrency because of the sequence
-  cache (`CACHE n`) — the true next value can be slightly ahead.
+- It reads the on-disk `last_value`. With `CACHE n`, that value can be ahead of
+  values already handed out, so pgbot cannot infer exact calls remaining or the
+  next call that will fail.
+- A cycle wholly inside the effective range is safe from numeric bound exhaustion,
+  not from duplicate-key or uniqueness failures after values repeat.
 - It cannot see application-managed or sharded ID allocation that bypasses the
   sequence, nor a hi/lo allocator that reserves large blocks.
 - The `int4`-column ceiling is inferred from the column type; a `domain` over

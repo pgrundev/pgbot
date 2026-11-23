@@ -288,15 +288,16 @@ type txPlanner struct {
 func (p txPlanner) hypo(fn string) string { return p.caps.ExtObject("hypopg", fn) }
 
 func (p txPlanner) GenericPlan(ctx context.Context, query string) ([]byte, error) {
-	// GENERIC_PLAN plans a normalized $N query without values; FORMAT JSON gives one
-	// row. This MUST use the simple-query protocol (Conn.SimpleQuery): the
+	// GENERIC_PLAN plans a normalized $N query without values; VERBOSE preserves
+	// each resolved relation's schema in FORMAT JSON, which gives one row. This
+	// MUST use the simple-query protocol (Conn.SimpleQuery): the
 	// extended protocol treats the $1/$2 inside the EXPLAIN'd query as bind
 	// parameters of the OUTER statement and demands values. GENERIC_PLAN exists
 	// precisely to plan those placeholders WITHOUT values, so the SQL must reach
 	// the server byte-for-byte.
 	var js []byte
 	err := p.inSavepoint(ctx, func() error {
-		res, err := p.tx.Conn().SimpleQuery(ctx, "EXPLAIN (GENERIC_PLAN, FORMAT JSON) "+query)
+		res, err := p.tx.Conn().SimpleQuery(ctx, "EXPLAIN (GENERIC_PLAN, VERBOSE, FORMAT JSON) "+query)
 		if err != nil {
 			return err
 		}

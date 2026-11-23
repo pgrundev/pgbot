@@ -18,11 +18,12 @@ var sqlCollation string
 type collationCollector struct{}
 
 type collationRow struct {
-	Kind     string `db:"kind"`
-	Name     string `db:"name"`
-	Provider string `db:"provider"`
-	Recorded string `db:"recorded"`
-	Actual   string `db:"actual"`
+	Kind         string `db:"kind"`
+	Name         string `db:"name"`
+	Provider     string `db:"provider"`
+	Recorded     string `db:"recorded"`
+	Actual       string `db:"actual"`
+	Unreferenced bool   `db:"unreferenced"` // negative so a missing column reads as in use
 }
 
 func (collationCollector) Name() string { return "collation" }
@@ -45,6 +46,7 @@ func (collationCollector) Assemble(c *model.Context, _ conn.Capabilities, s samp
 	for _, r := range rows {
 		col.Mismatches = append(col.Mismatches, model.CollationMismatch{
 			Kind: r.Kind, Name: r.Name, Provider: r.Provider, Recorded: r.Recorded, Actual: r.Actual,
+			Unreferenced: r.Unreferenced,
 		})
 	}
 	c.Collation = col

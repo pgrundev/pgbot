@@ -262,6 +262,7 @@ type Activity struct {
 	ByState             map[string]int `json:"by_state"`
 	WaitEvents          map[string]int `json:"wait_events,omitempty"`
 	LongestXactSec      float64        `json:"longest_xact_sec"`
+	LongestIdleXactSec  *float64       `json:"longest_idle_xact_sec,omitempty"`
 	LongestActiveSec    float64        `json:"longest_active_sec"`
 	Connections         []ConnGroup    `json:"connections,omitempty"`            // top contributors by app/user/state (A13)
 	AutovacuumWorkers   int            `json:"autovacuum_workers,omitempty"`     // running autovacuum workers (A19)
@@ -480,6 +481,8 @@ type CollationMismatch struct {
 	Provider string `json:"provider"` // libc | icu | builtin
 	Recorded string `json:"recorded_version"`
 	Actual   string `json:"actual_version"` // "" when the library reports none
+	// Nothing uses this collation. Negative so a row without it reads as in use.
+	Unreferenced bool `json:"unreferenced,omitempty"`
 }
 
 // ReplicaIdentity lists tables published for UPDATE/DELETE whose replica identity
@@ -525,8 +528,8 @@ type ProgressOp struct {
 	Pct       *float64 `json:"pct,omitempty"` // 0..100 where the view exposes a total
 }
 
-// Sequences reports how close each sequence is to exhausting its effective
-// ceiling (the lesser of its max_value and the owning column's integer range).
+// Sequences reports each sequence's position within its effective bounds after
+// accounting for direction and the owning column's integer range.
 type Sequences struct {
 	Section
 	Items []SequenceUsage `json:"items,omitempty"`
@@ -545,12 +548,16 @@ type NarrowIdentityColumn struct {
 }
 
 type SequenceUsage struct {
-	Schema    string  `json:"schema"`
-	Name      string  `json:"sequence"`
-	LastValue int64   `json:"last_value"`
-	Ceiling   int64   `json:"ceiling"`
-	PctUsed   float64 `json:"pct_used"`
-	OwnedBy   string  `json:"owned_by,omitempty"`
+	Schema        string  `json:"schema"`
+	Name          string  `json:"sequence"`
+	LastValue     int64   `json:"last_value"`
+	Ceiling       int64   `json:"ceiling"`  // effective upper bound; retained for JSON compatibility
+	PctUsed       float64 `json:"pct_used"` // position in the increment direction; legacy snapshots retain their stored ratio
+	OwnedBy       string  `json:"owned_by,omitempty"`
+	Floor         int64   `json:"floor,omitempty"`          // effective lower bound; zero is represented by omission
+	Increment     int64   `json:"increment,omitempty"`      // zero means this is a legacy snapshot without direction metadata
+	Cycle         bool    `json:"cycle,omitempty"`          // safe from numeric exhaustion only when ColumnLimited is false
+	ColumnLimited bool    `json:"column_limited,omitempty"` // the owning integer column narrows at least one sequence bound
 }
 
 // VacuumHorizon lists what pins the xmin horizon — the reason dead tuples aren't

@@ -20,4 +20,10 @@ package model
 //
 // 1.5.0: additive only — Context gains the `replica_identity` section (published
 // tables with no usable replica identity). A 1.4.0 consumer still parses it.
-const SchemaVersion = "1.5.0"
+//
+// 1.6.0: additive only — Activity gains longest_idle_xact_sec (idle-in-transaction
+// age measured on idle sessions only); SequenceUsage gains optional floor,
+// increment, cycle and column_limited (direction- and column-aware bounds); a
+// collation mismatch gains `unreferenced` (nothing uses that collation). New keys
+// are omitted when unset, so a 1.5.0 consumer still parses 1.6.0 output.
+const SchemaVersion = "1.6.0"

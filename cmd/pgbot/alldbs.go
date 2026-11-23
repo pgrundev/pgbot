@@ -110,13 +110,14 @@ func runInspectAll(ctx context.Context, connString string, f inspectFlags) error
 			worst = code
 		}
 	}
-	// --all-instances promises the whole cluster; anything less is partial
-	// coverage, reported after the partial output and failed in the exit code so
-	// a script cannot mistake "the members we could reach" for "the cluster".
-	if f.allInstances && skipped > 0 {
-		fmt.Fprintf(os.Stderr, "pgbot: partial cluster coverage — %d of %d targets not inspected (see above)\n", skipped, len(targets))
-		worst = partialCoverageExit(worst)
+	// --all-instances promises the whole cluster and --all-databases every
+	// database; anything less is partial coverage, reported after the partial
+	// output and failed in the exit code so a script cannot mistake "the targets
+	// we could reach" for "all of them" (#98).
+	if skipped > 0 {
+		fmt.Fprintf(os.Stderr, "pgbot: partial coverage — %d of %d targets not inspected (see above)\n", skipped, len(targets))
 	}
+	worst = fanoutExit(worst, skipped)
 
 	if err := renderAll(out, f); err != nil {
 		return err
@@ -125,7 +126,16 @@ func runInspectAll(ctx context.Context, connString string, f inspectFlags) error
 	return nil
 }
 
-// partialCoverageExit is the exit code for a fan-out that missed targets: the
+// fanoutExit is the fan-out's exit code: partial coverage whenever any target
+// was skipped, otherwise the findings' own code.
+func fanoutExit(worst, skipped int) int {
+	if skipped > 0 {
+		return partialCoverageExit(worst)
+	}
+	return worst
+}
+
+// partialCoverageExit is the exit code of a run that skipped targets: the
 // findings' own code if that is already a failure, else exitFailure.
 func partialCoverageExit(worst int) int {
 	if worst < exitFailure {
