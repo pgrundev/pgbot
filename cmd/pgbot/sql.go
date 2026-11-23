@@ -66,7 +66,7 @@ func newSQLExplainCmd() *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
-	fl.BoolVar(&f.jsonOut, "json", false, "print the raw EXPLAIN (FORMAT JSON) output instead of the reading")
+	fl.BoolVar(&f.jsonOut, "json", false, "print the raw EXPLAIN (FORMAT JSON) output instead of the reading (not with --ai)")
 	fl.BoolVar(&f.useAI, "ai", false, "append a model's plain-language explanation (needs an AI key in the environment)")
 	fl.BoolVar(&f.yes, "yes", false, "skip the data-disclosure confirmation prompt (--ai)")
 	fl.BoolVar(&f.noColor, "no-color", false, "disable ANSI color")
@@ -128,6 +128,11 @@ func looksLikeConnString(s string) bool {
 }
 
 func runSQLExplain(cmd *cobra.Command, args []string, f sqlExplainFlags) error {
+	// --json is the raw, machine-readable plan; prose appended to it would break
+	// every parser. Refuse the pair up front rather than silently dropping --ai.
+	if f.jsonOut && f.useAI {
+		return usageErrf("--json and --ai cannot be combined — --json prints only the raw EXPLAIN output")
+	}
 	connString, query, err := resolveSQLExplainInput(args, os.Stdin, isInteractive())
 	if err != nil {
 		return err

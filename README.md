@@ -756,7 +756,8 @@ are case-insensitive).
   placeholders need no values; older servers plan queries with literal values.
 - Only a **single plain SELECT** is accepted — no writes, no `WITH`, no multiple
   statements (exit 64 otherwise). pgbot never uses the executing form of EXPLAIN.
-- `--json` prints the raw `EXPLAIN (FORMAT JSON)` output.
+- `--json` prints the raw `EXPLAIN (FORMAT JSON)` output; it cannot be combined
+  with `--ai` (exit 64).
 - `--ai` appends a model's prose reading of the same rendered plan, behind the
   disclosure prompt below. Unlike the findings, **your SQL text can carry literal
   values**, so the prompt names exactly what is sent: the query and its plan.

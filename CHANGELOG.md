@@ -31,6 +31,9 @@ separately by `model.SchemaVersion` (currently 1.5.0).
 - `pgbot sql explain` no longer treats a `$1` inside a dollar-quoted literal
   (`$$ … $$`, `$tag$ … $tag$`) as a parameter placeholder, so the generic-plan
   "parameter values unknown" caveat is no longer shown for such queries (#141).
+- `pgbot sql explain --json --ai` is now refused as a usage error (exit 64)
+  instead of printing the raw plan and silently dropping the requested AI
+  explanation — after already asking consent to send the SQL (#139).
 
 ## [0.10.0] - 2026-11-16
 
