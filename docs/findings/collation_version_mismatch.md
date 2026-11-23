@@ -12,7 +12,7 @@ related: []
 
 # collation_version_mismatch
 
-**Severity:** warn (critical when the database's default collation is the one that changed) · **Dimension:** risk · **Object identity:** `db:<database>` (see [configuration](../configuration.md)) · **Requires:** PostgreSQL 15+
+**Severity:** warn (critical when the database's default collation is the one that changed; info when nothing uses any collation that changed) · **Dimension:** risk · **Object identity:** `db:<database>` (see [configuration](../configuration.md)) · **Requires:** PostgreSQL 15+
 
 ## What pgbot observed
 
@@ -24,7 +24,15 @@ Only this database is checked; collations whose provider records no version
 (`C`, `POSIX`) cannot drift and are never reported.
 
 Critical when the **database default** drifted, because every text index that
-does not name a collation uses it. Warn when only named collations drifted.
+does not name a collation uses it. Warn when a named collation that something
+uses drifted: a column, an index, a partition key, or anything else that depends
+on it in `pg_depend`.
+
+Info when nothing uses any of the drifted collations. An ICU upgrade under a
+libc database is the usual cause: every built-in `pg_catalog.*-x-icu` collation
+(about 870) records the old version at once, but no index is sorted by them, so
+nothing can be out of order. Those collations are counted on one evidence line
+rather than listed, and the info finding does not affect the exit code.
 
 ## Why it matters
 
@@ -50,12 +58,22 @@ WHERE datname = current_database();
 ```sql
 SELECT n.nspname || '.' || c.collname AS collation,
        c.collversion                     AS recorded,
-       pg_collation_actual_version(c.oid) AS actual
+       pg_collation_actual_version(c.oid) AS actual,
+       EXISTS (SELECT 1 FROM pg_depend d
+               WHERE d.refclassid = 'pg_collation'::regclass AND d.refobjid = c.oid)
+       OR EXISTS (SELECT 1 FROM pg_attribute a
+                  WHERE a.attcollation = c.oid AND a.attnum > 0 AND NOT a.attisdropped)
+       OR EXISTS (SELECT 1 FROM pg_partitioned_table p
+                  WHERE c.oid = ANY (p.partcollation)) AS in_use
 FROM pg_collation c
 JOIN pg_namespace n ON n.oid = c.collnamespace
 WHERE c.collversion IS NOT NULL
   AND c.collversion IS DISTINCT FROM pg_collation_actual_version(c.oid);
 ```
+
+The `pg_attribute` and `pg_partitioned_table` checks are not redundant:
+PostgreSQL 15+ records no `pg_depend` row for a built-in collation created at
+bootstrap, such as PG16's `unicode`, even when a column uses it.
 
 A fresh `psql` session to the database prints the same thing Postgres sees:
 `WARNING: database "app" has a collation version mismatch`.
@@ -87,7 +105,27 @@ Rebuild first, then tell Postgres the new version is the right one. In that orde
    ```
 
 Refreshing *before* reindexing only updates the catalog: the warning goes away
-and the indexes stay corrupt. On a managed provider, check whether the provider
+and the indexes stay corrupt.
+
+When the finding is **info** (nothing uses the drifted collations), there is
+nothing to reindex. Refreshing records the current version and clears it; a
+superuser can refresh every drifted collation in the database at once:
+
+```sql
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT n.nspname, c.collname
+           FROM pg_collation c JOIN pg_namespace n ON n.oid = c.collnamespace
+           WHERE c.collversion IS NOT NULL
+             AND c.collversion IS DISTINCT FROM pg_collation_actual_version(c.oid) LOOP
+    EXECUTE format('ALTER COLLATION %I.%I REFRESH VERSION', r.nspname, r.collname);
+  END LOOP;
+END$$;
+```
+
+Run it only when the finding is info, or after reindexing: it refreshes the
+collations that are in use too. On a managed provider, check whether the provider
 handled this as part of a major-version upgrade before doing it yourself; it is
 still your indexes.
 
@@ -113,6 +151,9 @@ expires = "2026-10-01"
   rebuild.
 - Which indexes use the affected collation. It reports the collation; mapping it
   to indexes is the reindex step.
+- A collation named only inside a query (`ORDER BY name COLLATE "de-x-icu"`).
+  That is not a stored use, so such a collation counts as unused; nothing on disk
+  is ordered by it.
 - Other databases in the cluster. Each records its own `datcollversion`; run
   `--all-databases` to check them all.
 - PostgreSQL 14 and older, which do not record a database-level version.

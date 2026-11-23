@@ -227,6 +227,9 @@
         },
         "actual_version": {
           "type": "string"
+        },
+        "unreferenced": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false,
