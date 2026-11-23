@@ -93,8 +93,12 @@ the one relation you've reasoned about.
   actually `DELETE` or key-`UPDATE` parent rows. If you never do, the index only
   helps joins — real, but a lower priority than the RI-scan risk implies.
 - The coverage check is **structural leading-prefix** matching. An index in a
-  different column order, or a partial index that happens to serve the FK, won't be
-  recognized as covering it.
+  different column order won't be recognized as covering it. A partial index counts
+  only when its predicate is `<fk column> IS NOT NULL` (or an `AND` of those): the
+  RI lookup `WHERE $1 = fk_col` implies that predicate, so the planner can use it.
+  A partial index on anything else (e.g. `WHERE deleted_at IS NULL`) does not cover
+  the FK — the RI check must still find the rows it excludes — and other
+  equivalent spellings of `IS NOT NULL` are conservatively not recognized.
 - It doesn't measure lock waits caused by this — those only appear (in
   `blocking_chains`) at the moment a parent delete actually stalls behind the scan.
 

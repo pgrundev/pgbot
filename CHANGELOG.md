@@ -33,6 +33,10 @@ separately by `model.SchemaVersion` (currently 1.5.0).
 - `pgbot why` no longer compiles a regexp for every query × table pair while
   linking queries to tables; the matcher is an allocation-free scan with
   identical results (~8× faster in the new benchmark) (#142).
+- `fk_unindexed` now counts a partial index on the FK columns as covering when
+  its predicate is `<fk column> IS NOT NULL` (or an `AND` of those), which the
+  RI trigger's `WHERE $1 = fk_col` lookup implies. Partial indexes on any other
+  predicate (e.g. `deleted_at IS NULL`) are still reported (#129).
 
 ## [0.10.0] - 2026-11-16
 
