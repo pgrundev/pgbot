@@ -27,6 +27,11 @@ separately by `model.SchemaVersion` (currently 1.5.0).
   Other platforms get "PgBot Monitor currently supports macOS only"; every other
   command is unchanged. The `--json` contract is unchanged.
 
+### Fixed
+- `pgbot sql explain` no longer treats a `$1` inside a dollar-quoted literal
+  (`$$ … $$`, `$tag$ … $tag$`) as a parameter placeholder, so the generic-plan
+  "parameter values unknown" caveat is no longer shown for such queries (#141).
+
 ## [0.10.0] - 2026-11-16
 
 ### Added
