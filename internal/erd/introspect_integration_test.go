@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/pgrundev/pggo"
 )
 
 func TestIntegrationIntrospectPreservesQualifiedTableIdentity(t *testing.T) {
@@ -18,11 +18,11 @@ func TestIntegrationIntrospectPreservesQualifiedTableIdentity(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	conn, err := pgx.Connect(ctx, dsn)
+	conn, err := pggo.Connect(ctx, dsn)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	t.Cleanup(func() { _ = conn.Close(context.Background()) })
+	t.Cleanup(func() { _ = conn.Close() })
 
 	prefix := fmt.Sprintf("pgbot_erd_%d", time.Now().UnixNano())
 	collisionA := tableIdentity{Schema: prefix + ".part", Name: "users"}
@@ -35,13 +35,13 @@ func TestIntegrationIntrospectPreservesQualifiedTableIdentity(t *testing.T) {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cleanupCancel()
 		for i := len(createdSchemas) - 1; i >= 0; i-- {
-			if _, err := conn.Exec(cleanupCtx, `DROP SCHEMA IF EXISTS `+pgx.Identifier{createdSchemas[i]}.Sanitize()+` CASCADE`); err != nil {
+			if _, err := conn.Exec(cleanupCtx, `DROP SCHEMA IF EXISTS `+quoteIdent(createdSchemas[i])+` CASCADE`); err != nil {
 				t.Errorf("drop schema %q: %v", createdSchemas[i], err)
 			}
 		}
 	})
 	for _, schema := range schemas {
-		if _, err := conn.Exec(ctx, `CREATE SCHEMA `+pgx.Identifier{schema}.Sanitize()); err != nil {
+		if _, err := conn.Exec(ctx, `CREATE SCHEMA `+quoteIdent(schema)); err != nil {
 			t.Fatalf("create schema %q: %v", schema, err)
 		}
 		createdSchemas = append(createdSchemas, schema)
@@ -49,17 +49,17 @@ func TestIntegrationIntrospectPreservesQualifiedTableIdentity(t *testing.T) {
 
 	createTable := func(id tableIdentity, body string) {
 		t.Helper()
-		if _, err := conn.Exec(ctx, `CREATE TABLE `+pgx.Identifier{id.Schema, id.Name}.Sanitize()+` (`+body+`)`); err != nil {
+		if _, err := conn.Exec(ctx, `CREATE TABLE `+quoteIdent(id.Schema, id.Name)+` (`+body+`)`); err != nil {
 			t.Fatalf("create table %s: %v", qualifiedTableName(id), err)
 		}
 	}
 	createTable(collisionA, `id bigint PRIMARY KEY, a_marker text`)
 	createTable(collisionB, `id bigint PRIMARY KEY, b_marker text`)
 	createTable(sameName, `id bigint PRIMARY KEY`)
-	createTable(child, `id bigint PRIMARY KEY, buyer_id bigint REFERENCES `+pgx.Identifier{collisionA.Schema, collisionA.Name}.Sanitize()+` (id)`)
+	createTable(child, `id bigint PRIMARY KEY, buyer_id bigint REFERENCES `+quoteIdent(collisionA.Schema, collisionA.Name)+` (id)`)
 	for id, index := range map[tableIdentity]string{collisionA: "a_marker_idx", collisionB: "b_marker_idx"} {
 		column := strings.TrimSuffix(index, "_idx")
-		if _, err := conn.Exec(ctx, `CREATE INDEX `+pgx.Identifier{index}.Sanitize()+` ON `+pgx.Identifier{id.Schema, id.Name}.Sanitize()+` (`+pgx.Identifier{column}.Sanitize()+`)`); err != nil {
+		if _, err := conn.Exec(ctx, `CREATE INDEX `+quoteIdent(index)+` ON `+quoteIdent(id.Schema, id.Name)+` (`+quoteIdent(column)+`)`); err != nil {
 			t.Fatalf("create index %q: %v", index, err)
 		}
 	}
@@ -120,4 +120,13 @@ func TestIntegrationIntrospectPreservesQualifiedTableIdentity(t *testing.T) {
 		}
 	}
 	t.Fatal("child table lost buyer_id column")
+}
+
+// quoteIdent double-quotes each identifier part and joins them with dots.
+func quoteIdent(parts ...string) string {
+	q := make([]string, len(parts))
+	for i, p := range parts {
+		q[i] = `"` + strings.ReplaceAll(p, `"`, `""`) + `"`
+	}
+	return strings.Join(q, ".")
 }

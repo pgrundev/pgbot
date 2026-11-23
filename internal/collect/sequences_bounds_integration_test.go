@@ -6,13 +6,14 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/pgrundev/pgbot/internal/conn"
 	"github.com/pgrundev/pgbot/internal/findings"
 	"github.com/pgrundev/pgbot/internal/model"
+	"github.com/pgrundev/pggo"
 )
 
 func TestIntegration_sequencesCollectorDirectionCycleAndBoundedRiskOrder(t *testing.T) {
@@ -24,13 +25,13 @@ func TestIntegration_sequencesCollectorDirectionCycleAndBoundedRiskOrder(t *test
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	admin, err := pgx.Connect(ctx, superDSN)
+	admin, err := pggo.Connect(ctx, superDSN)
 	if err != nil {
 		t.Fatalf("admin connect: %v", err)
 	}
 	database := fmt.Sprintf("pgbot_seq_%d_%d", os.Getpid(), time.Now().UnixNano())
-	quotedDatabase := pgx.Identifier{database}.Sanitize()
-	var fixture *pgx.Conn
+	quotedDatabase := quoteIdent(database)
+	var fixture *pggo.Conn
 	var target *conn.Target
 	databaseCreated := false
 	t.Cleanup(func() {
@@ -40,7 +41,7 @@ func TestIntegration_sequencesCollectorDirectionCycleAndBoundedRiskOrder(t *test
 			target.Close()
 		}
 		if fixture != nil {
-			if err := fixture.Close(cleanupCtx); err != nil {
+			if err := fixture.Close(); err != nil {
 				t.Errorf("close fixture connection: %v", err)
 			}
 		}
@@ -49,7 +50,7 @@ func TestIntegration_sequencesCollectorDirectionCycleAndBoundedRiskOrder(t *test
 				t.Errorf("drop disposable database %s: %v", database, err)
 			}
 		}
-		if err := admin.Close(cleanupCtx); err != nil {
+		if err := admin.Close(); err != nil {
 			t.Errorf("close admin connection: %v", err)
 		}
 	})
@@ -58,12 +59,12 @@ func TestIntegration_sequencesCollectorDirectionCycleAndBoundedRiskOrder(t *test
 		t.Fatalf("create disposable database: %v", err)
 	}
 	databaseCreated = true
-	fixtureConfig, err := pgx.ParseConfig(superDSN)
+	fixtureConfig, err := pggo.ParseConfig(superDSN)
 	if err != nil {
 		t.Fatalf("parse superuser DSN: %v", err)
 	}
 	fixtureConfig.Database = database
-	fixture, err = pgx.ConnectConfig(ctx, fixtureConfig)
+	fixture, err = pggo.ConnectConfig(ctx, fixtureConfig)
 	if err != nil {
 		t.Fatalf("connect disposable database: %v", err)
 	}
@@ -97,7 +98,7 @@ func TestIntegration_sequencesCollectorDirectionCycleAndBoundedRiskOrder(t *test
 	}
 	for i := 0; i < 55; i++ {
 		name := fmt.Sprintf("safe_cycle_%02d", i)
-		qualified := pgx.Identifier{"seq_fixture", name}.Sanitize()
+		qualified := quoteIdent("seq_fixture", name)
 		if _, err := fixture.Exec(ctx, "CREATE SEQUENCE "+qualified+" AS bigint MINVALUE 1 MAXVALUE 100 START WITH 1 CYCLE"); err != nil {
 			t.Fatalf("create %s: %v", name, err)
 		}
@@ -105,7 +106,7 @@ func TestIntegration_sequencesCollectorDirectionCycleAndBoundedRiskOrder(t *test
 			t.Fatalf("position %s: %v", name, err)
 		}
 	}
-	if _, err := fixture.Exec(ctx, `GRANT USAGE ON SCHEMA seq_fixture TO PUBLIC; GRANT SELECT ON ALL SEQUENCES IN SCHEMA seq_fixture TO PUBLIC`); err != nil {
+	if _, err := fixture.SimpleQuery(ctx, `GRANT USAGE ON SCHEMA seq_fixture TO PUBLIC; GRANT SELECT ON ALL SEQUENCES IN SCHEMA seq_fixture TO PUBLIC`); err != nil {
 		t.Fatalf("grant fixture visibility: %v", err)
 	}
 
@@ -173,4 +174,13 @@ func hasSequenceFinding(t *testing.T, fs []model.Finding) *model.Finding {
 	}
 	t.Fatal("expected sequence_exhaustion")
 	return nil
+}
+
+// quoteIdent double-quotes each identifier part and joins them with dots.
+func quoteIdent(parts ...string) string {
+	q := make([]string, len(parts))
+	for i, p := range parts {
+		q[i] = `"` + strings.ReplaceAll(p, `"`, `""`) + `"`
+	}
+	return strings.Join(q, ".")
 }
