@@ -201,7 +201,7 @@ func runSQLExplain(cmd *cobra.Command, args []string, f sqlExplainFlags) error {
 		aiCtx, aiCancel := context.WithTimeout(cmd.Context(), 3*time.Minute)
 		defer aiCancel()
 		text, aiErr := ai.ExplainPlan(aiCtx, llm, query, plain.String())
-		printAISection(color, llm.Model(), text, aiErr)
+		printAISection(color, llm.Model(), text, aiErr, aiOnPlan)
 	}
 	return nil
 }

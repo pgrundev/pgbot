@@ -34,6 +34,9 @@ separately by `model.SchemaVersion` (currently 1.5.0).
 - `pgbot sql explain --json --ai` is now refused as a usage error (exit 64)
   instead of printing the raw plan and silently dropping the requested AI
   explanation — after already asking consent to send the SQL (#139).
+- `pgbot sql explain --ai` no longer labels the query plan as "the findings
+  above" in the AI section's footer and fallback note; it now refers to the
+  query plan that was actually printed (#140).
 
 ## [0.10.0] - 2026-11-16
 

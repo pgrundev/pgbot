@@ -122,7 +122,7 @@ func runExplain(cmd *cobra.Command, args []string, f inspectFlags, yes bool) err
 	aiCtx, aiCancel := context.WithTimeout(cmd.Context(), 3*time.Minute)
 	defer aiCancel()
 	explanation, aiErr := ai.Explain(aiCtx, llm, c)
-	printAISection(color, llm.Model(), explanation, aiErr)
+	printAISection(color, llm.Model(), explanation, aiErr, aiOnFindings)
 	// The destructive-action guards, reasserted by code AFTER the model text — so a
 	// reworded or truncated explanation can never be the thing that drops them.
 	if aiErr == nil {
@@ -167,9 +167,24 @@ func confirmDisclosureOf(cmdName, payload string, llm ai.LanguageModel, yes bool
 	return r == "y" || r == "yes"
 }
 
+// aiSubject is what the AI section explains — it decides how the footer names
+// the deterministic output printed above it.
+type aiSubject int
+
+const (
+	aiOnFindings aiSubject = iota // explain / ask: pgbot's computed findings
+	aiOnPlan                      // sql explain: PostgreSQL's query plan
+)
+
 // printAISection renders the labeled AI block. The banner makes it unmistakable
 // that this text is model-generated and must be verified before acting.
-func printAISection(color bool, modelName, text string, aiErr error) {
+func printAISection(color bool, modelName, text string, aiErr error, subject aiSubject) {
+	unavailable := "The findings above are complete and were computed without the model."
+	authoritative := "The findings above are authoritative and computed deterministically; the text"
+	if subject == aiOnPlan {
+		unavailable = "The query plan above is complete and was read without the model."
+		authoritative = "The query plan above is PostgreSQL's own (estimated) plan; the text"
+	}
 	st := render.NewStyler(color)
 	rule := strings.Repeat("─", 64)
 	fmt.Println()
@@ -179,11 +194,11 @@ func printAISection(color bool, modelName, text string, aiErr error) {
 	fmt.Println()
 	if aiErr != nil {
 		fmt.Println(st.Dim("  (explanation unavailable: " + aiErr.Error() + ")"))
-		fmt.Println(st.Dim("  The findings above are complete and were computed without the model."))
+		fmt.Println(st.Dim("  " + unavailable))
 		return
 	}
 	fmt.Println(text)
 	fmt.Println()
-	fmt.Println(st.Dim("The findings above are authoritative and computed deterministically; the text"))
+	fmt.Println(st.Dim(authoritative))
 	fmt.Println(st.Dim("in this section is a model's interpretation and may be wrong."))
 }
