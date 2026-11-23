@@ -84,7 +84,7 @@ func (n appNotifier) ensure() error {
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 	tmp := filepath.Join(tmpDir, "PgBot.app")
 
 	args := []string{"-o", tmp}

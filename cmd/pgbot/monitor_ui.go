@@ -156,7 +156,7 @@ func (u *ui) chooseRaw(opts []string, cur int) (int, error) {
 	if err != nil {
 		return 0, errNoRaw
 	}
-	defer term.Restore(fd, old)
+	defer func() { _ = term.Restore(fd, old) }()
 
 	draw := func(first bool) {
 		if !first {

@@ -24,7 +24,7 @@ func Lock(path string) (unlock func(), err error) {
 		return nil, err
 	}
 	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
-		f.Close()
+		_ = f.Close()
 		if errors.Is(err, unix.EWOULDBLOCK) {
 			return nil, ErrBusy
 		}
@@ -32,6 +32,6 @@ func Lock(path string) (unlock func(), err error) {
 	}
 	return func() {
 		_ = unix.Flock(int(f.Fd()), unix.LOCK_UN)
-		f.Close()
+		_ = f.Close()
 	}, nil
 }

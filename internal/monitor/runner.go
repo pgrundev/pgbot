@@ -77,7 +77,6 @@ func (r Runner) Check(ctx context.Context, manual bool) (*Report, error) {
 		cctx, cancel := context.WithTimeout(ctx, timeout)
 		res, err = r.Inspect(cctx, secret)
 		cancel()
-		secret = ""
 	}
 
 	out := Outcome{At: now(), Manual: manual}
@@ -148,7 +147,7 @@ func TrimLog(path string, max, keep int64) error {
 		}
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	st, err := f.Stat()
 	if err != nil || st.Size() <= max {
 		return err
