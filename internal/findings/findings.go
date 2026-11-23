@@ -59,7 +59,7 @@ const (
 	// is a real block on dead-tuple reclamation (not a momentary query).
 	vacuumHorizonWarnXIDs = 1_000_000
 
-	// Sequence exhaustion (last_value / effective ceiling).
+	// Sequence exhaustion (position within effective bounds in increment direction).
 	seqExhaustionWarn = 0.80
 	seqExhaustionCrit = 0.90
 
@@ -1032,9 +1032,14 @@ func idleInTransaction(c *model.Context, add func(model.Finding)) {
 	}
 	sevr := model.SeverityInfo
 	score := 30.0
-	if c.Activity.LongestXactSec >= idleInTxnWarnSec {
+	age := c.Activity.LongestIdleXactSec
+	if age != nil && *age >= idleInTxnWarnSec {
 		sevr = model.SeverityWarn
-		score = math.Min(80, 50+c.Activity.LongestXactSec/30)
+		score = math.Min(80, 50+*age/30)
+	}
+	estimate := fmt.Sprintf("%d session(s), idle transaction age not measured", c.Activity.IdleInTransaction)
+	if age != nil {
+		estimate = fmt.Sprintf("%d session(s), longest idle transaction %.0fs", c.Activity.IdleInTransaction, *age)
 	}
 	add(model.Finding{
 		ID: "idle_in_transaction", Severity: sevr,
@@ -1042,7 +1047,7 @@ func idleInTransaction(c *model.Context, add func(model.Finding)) {
 		Detail:      "Idle-in-transaction sessions hold locks and pin the xmin horizon, blocking vacuum. Long-lived ones are a common source of bloat and lock waits.",
 		Remediation: "Find the session and fix the app's transaction handling; consider idle_in_transaction_session_timeout.",
 		Impact: impact(model.DimRisk, score,
-			fmt.Sprintf("%d session(s), longest %.0fs", c.Activity.IdleInTransaction, c.Activity.LongestXactSec),
+			estimate,
 			"pg_stat_activity idle-in-transaction count + age"),
 		Confidence: 0.7,
 	})
@@ -1203,17 +1208,22 @@ func txidWraparound(c *model.Context, add func(model.Finding)) {
 	})
 }
 
-// sequenceExhaustion flags a sequence approaching its effective ceiling — the
-// lesser of its max_value and the owning column's integer range. At the ceiling
-// the next nextval() errors: a full write outage. An int4 identity/serial column
-// wraps at 2.1B even if the sequence's own max reads 2^63. DimRisk (top of report).
+// sequenceExhaustion flags a sequence approaching its terminal bound in its
+// increment direction. A cycle wholly inside the effective range is excluded;
+// a cycle narrowed by its owning integer column can still emit an unrepresentable
+// value before or after wrapping. DimRisk (top of report).
 func sequenceExhaustion(c *model.Context, add func(model.Finding)) {
 	if c.Sequences == nil || len(c.Sequences.Items) == 0 {
 		return
 	}
 	var ev, objs []string
 	var worst float64
+	hasDirectionalMetadata := false
 	for _, s := range c.Sequences.Items {
+		legacy := s.Increment == 0
+		if !legacy && s.Cycle && !s.ColumnLimited {
+			continue
+		}
 		if s.PctUsed < seqExhaustionWarn {
 			continue
 		}
@@ -1224,7 +1234,21 @@ func sequenceExhaustion(c *model.Context, add func(model.Finding)) {
 		if s.OwnedBy != "" {
 			owned = " (" + s.OwnedBy + ")"
 		}
-		ev = append(ev, fmt.Sprintf("%s.%s%s: %.0f%% used (%s / %s)", s.Schema, s.Name, owned, s.PctUsed*100, human(s.LastValue), human(s.Ceiling)))
+		if legacy {
+			ev = append(ev, fmt.Sprintf("%s.%s%s: %.0f%% used (%s / %s)", s.Schema, s.Name, owned, s.PctUsed*100, human(s.LastValue), human(s.Ceiling)))
+		} else {
+			hasDirectionalMetadata = true
+			bound, boundName := s.Ceiling, "ceiling"
+			if s.Increment < 0 {
+				bound, boundName = s.Floor, "floor"
+			}
+			qualifier := ""
+			if s.Cycle && s.ColumnLimited {
+				qualifier = ", column-limited cycle"
+			}
+			ev = append(ev, fmt.Sprintf("%s.%s%s: %.0f%% through effective range (%s toward %s %s%s)",
+				s.Schema, s.Name, owned, s.PctUsed*100, human(s.LastValue), boundName, human(bound), qualifier))
+		}
 		objs = append(objs, s.Schema+"."+s.Name)
 	}
 	if len(ev) == 0 {
@@ -1234,14 +1258,24 @@ func sequenceExhaustion(c *model.Context, add func(model.Finding)) {
 	if worst >= seqExhaustionCrit {
 		sev = model.SeverityCritical
 	}
+	detail := "A sequence at its ceiling raises an error on the next nextval() — a write outage for anything that inserts. An int4 identity/serial column wraps at 2.1 billion even when the sequence's own max_value is higher."
+	remediation := "Migrate the owning column to bigint (ALTER TABLE … ALTER COLUMN … TYPE bigint — plan for the table rewrite). If the column is already bigint, exhaustion is astronomically far off."
+	basis := "last_value / min(max_value, column type max)"
+	estimate := fmt.Sprintf("%.0f%% of range used", worst*100)
+	if hasDirectionalMetadata {
+		detail = "The recorded sequence position is near its terminal bound in the increment direction. Non-cycling sequences eventually reject nextval at that bound; cycling sequences remain eligible only when an owning integer column narrows the usable range. Cached last_value is a bounds-position signal, not an exact count of calls remaining."
+		remediation = "Review the sequence bounds, increment, cycle mode, and owning column type. Widen a column-limited owner to bigint (planning for the table rewrite); otherwise plan a wider key or bounds change before the sequence reaches its terminal bound."
+		basis = "direction-aware position within effective sequence and owning-column bounds"
+		estimate = fmt.Sprintf("%.0f%% through effective range", worst*100)
+	}
 	add(model.Finding{
 		ID: "sequence_exhaustion", Severity: sev,
 		Title:       fmt.Sprintf("%d sequence(s) near exhaustion (worst %.0f%%)", len(ev), worst*100),
-		Detail:      "A sequence at its ceiling raises an error on the next nextval() — a write outage for anything that inserts. An int4 identity/serial column wraps at 2.1 billion even when the sequence's own max_value is higher.",
+		Detail:      detail,
 		Evidence:    ev,
 		Objects:     objs,
-		Remediation: "Migrate the owning column to bigint (ALTER TABLE … ALTER COLUMN … TYPE bigint — plan for the table rewrite). If the column is already bigint, exhaustion is astronomically far off.",
-		Impact:      impact(model.DimRisk, worst*100, fmt.Sprintf("%.0f%% of range used", worst*100), "last_value / min(max_value, column type max)"),
+		Remediation: remediation,
+		Impact:      impact(model.DimRisk, worst*100, estimate, basis),
 		Confidence:  0.9,
 		Safety: safety(precondition("narrow_column.table_rewrite", model.ActionAlterColumnType,
 			"ALTER ... TYPE bigint rewrites the whole table under an ACCESS EXCLUSIVE lock.",
@@ -1600,14 +1634,19 @@ func checksumFindings(c *model.Context, add func(model.Finding)) {
 // OS upgrade, a new base image, a restore onto a different host), so any btree
 // over text sorted by that collation may be silently out of order — lookups miss
 // rows and UNIQUE constraints stop catching duplicates. Critical when it is the
-// database default (every unqualified text index); warn for a named collation.
+// database default (every unqualified text index); warn for a named collation;
+// info when nothing uses the drifted collations (#130).
 func collationVersionMismatch(c *model.Context, add func(model.Finding)) {
 	if c.Collation == nil || len(c.Collation.Mismatches) == 0 {
 		return
 	}
-	var ev []string
+	var ev, unused []string
 	dbDefault := false
 	for _, m := range c.Collation.Mismatches {
+		if m.Unreferenced {
+			unused = append(unused, m.Name)
+			continue
+		}
 		actual := m.Actual
 		if actual == "" {
 			actual = "unknown"
@@ -1619,7 +1658,30 @@ func collationVersionMismatch(c *model.Context, add func(model.Finding)) {
 		}
 		ev = append(ev, fmt.Sprintf("collation %s (%s): recorded %s, library now %s", m.Name, m.Provider, m.Recorded, actual))
 	}
-	n := len(c.Collation.Mismatches)
+	if len(unused) > 0 {
+		// An ICU upgrade drifts ~870 built-in collations at once; summarize them.
+		names := strings.Join(unused[:min(3, len(unused))], ", ")
+		if len(unused) > 3 {
+			names += fmt.Sprintf(" and %d more", len(unused)-3)
+		}
+		ev = append(ev, fmt.Sprintf("%d collation(s) that nothing uses changed version: %s", len(unused), names))
+	}
+	n := len(c.Collation.Mismatches) - len(unused)
+	if n == 0 {
+		add(model.Finding{
+			ID: "collation_version_mismatch", Object: "db:" + c.Server.Database, Severity: model.SeverityInfo,
+			Title:       fmt.Sprintf("%d unused collation(s) record an older library version", len(unused)),
+			Detail:      "The collation library (libc or ICU) changed version since these collations were created, but no column, index or partition key uses them, so no index is sorted by them and none can be out of order. The recorded version is stale catalog metadata.",
+			Evidence:    ev,
+			Remediation: "Nothing needs reindexing. ALTER COLLATION … REFRESH VERSION on each records the library's current version and clears this.",
+			Caveats: []string{
+				"A collation named only inside a query (ORDER BY x COLLATE …) is not tracked as a use, but no stored order depends on it.",
+			},
+			Impact:     impact(model.DimRisk, 15, fmt.Sprintf("%d unused collation version mismatch(es)", len(unused)), "collversion ≠ the library's actual version; nothing references them"),
+			Confidence: 1.0,
+		})
+		return
+	}
 	sev, score := model.SeverityWarn, 60.0
 	title := fmt.Sprintf("%d collation(s) changed version under this database", n)
 	if dbDefault {

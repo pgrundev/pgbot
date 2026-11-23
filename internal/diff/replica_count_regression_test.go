@@ -21,8 +21,11 @@ func TestReplicaCountLossControls(t *testing.T) {
 		{"named replica address changes", []model.ReplicaRow{{AppName: "a", ClientAddr: "192.0.2.1"}}, []model.ReplicaRow{{AppName: "a", ClientAddr: "192.0.2.2"}}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			base := &model.Context{Replication: &model.Replication{Replicas: tc.before}}
-			now := &model.Context{Replication: &model.Replication{Replicas: tc.after}}
+			// Collected sections always carry an exactness label; an unlabelled,
+			// empty section is a legacy "not observed" one (#100).
+			scraped := model.Section{Exactness: model.ExactnessScraped}
+			base := &model.Context{Replication: &model.Replication{Section: scraped, Replicas: tc.before}}
+			now := &model.Context{Replication: &model.Replication{Section: scraped, Replicas: tc.after}}
 			d := Compute(now, &Baseline{Context: base}, nil)
 			got := map[string][2]float64{}
 			for _, c := range d.Changes {

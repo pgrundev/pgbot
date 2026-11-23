@@ -49,6 +49,23 @@ func TestInitSQLCustomRoleAndDatabase(t *testing.T) {
 	}
 }
 
+func TestInitSQLQuotesNames(t *testing.T) {
+	// A hyphen, a space or an uppercase letter is a syntax error or a different
+	// name unquoted; psql must get exactly the role and database asked for.
+	sql := initSQL("Metrics-RO", "my-app db", conn.ProviderUnknown, true)
+	for _, want := range []string{
+		`CREATE ROLE "Metrics-RO" LOGIN PASSWORD`,
+		`GRANT pg_monitor TO "Metrics-RO";`,
+		`GRANT CONNECT ON DATABASE "my-app db" TO "Metrics-RO";`,
+		`TO "Metrics-RO";` + "\n",
+		`postgres://Metrics-RO:<password>@<host>:5432/my-app%20db?sslmode=require`,
+	} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("init SQL missing %q\n---\n%s", want, sql)
+		}
+	}
+}
+
 func TestInitSQLProviderPgss(t *testing.T) {
 	// Supabase/Neon preload pg_stat_statements, so CREATE EXTENSION is safe to
 	// run as-is: it must appear as an executable statement, not a comment.

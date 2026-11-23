@@ -2,9 +2,13 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/pgrundev/pgbot/internal/advisor"
 	"github.com/pgrundev/pgbot/internal/conn"
 	"github.com/pgrundev/pggo"
 )
@@ -61,4 +65,106 @@ func TestIntegration_adviseSafety_readOnlyTxBlocksInjectedWrite(t *testing.T) {
 		t.Fatalf("SAFETY VIOLATION: injected write executed (%d rows) — READ ONLY did not hold", n)
 	}
 	_, _ = admin.Exec(ctx, `DROP TABLE IF EXISTS advise_safety`)
+}
+
+func TestIntegration_advisorTargetsResolvedNonPublicSchema(t *testing.T) {
+	superuserDSN := os.Getenv("PGBOT_TEST_SUPERUSER_DSN")
+	if superuserDSN == "" {
+		t.Skip("set PGBOT_TEST_SUPERUSER_DSN to run the advisor schema integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	admin, err := pggo.Connect(ctx, superuserDSN)
+	if err != nil {
+		t.Fatalf("admin connect: %v", err)
+	}
+	defer func() { _ = admin.Close() }()
+	var serverVersion int
+	if err := admin.QueryRow(ctx, `SELECT current_setting('server_version_num')::int`).Scan(&serverVersion); err != nil {
+		t.Fatal(err)
+	}
+	if serverVersion < 160000 {
+		t.Skip("generic-plan advisor requires PostgreSQL 16+")
+	}
+	dbName := fmt.Sprintf("pgbot_advisor_schema_%d", time.Now().UnixNano())
+	quotedDB := conn.QuoteIdent(dbName)
+	dropDatabase := func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cleanupCancel()
+		if _, err := admin.Exec(cleanupCtx, `DROP DATABASE `+quotedDB+` WITH (FORCE)`); err != nil {
+			t.Errorf("remove owned fixture database: %v", err)
+		}
+	}
+	if _, err := admin.Exec(ctx, `CREATE DATABASE `+quotedDB); err != nil {
+		t.Fatalf("create fixture database: %v", err)
+	}
+	defer dropDatabase()
+
+	dsn := swapDatabase(t, superuserDSN, dbName)
+	fixture, err := pggo.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("fixture connect: %v", err)
+	}
+	defer func() { _ = fixture.Close() }()
+
+	// HypoPG is packaged for released PostgreSQL versions only (not betas).
+	if _, err := fixture.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS hypopg`); err != nil {
+		if strings.Contains(err.Error(), "is not available") {
+			t.Skip("hypopg is not installed on this server")
+		}
+		t.Fatalf("create hypopg: %v", err)
+	}
+	for _, stmt := range []string{
+		`CREATE SCHEMA pgbot_advise_schema_it`,
+		`CREATE TABLE pgbot_advise_schema_it.pgbot_same_name_it (customer_id integer NOT NULL, payload text)`,
+		`CREATE TABLE public.pgbot_same_name_it (customer_id integer NOT NULL, payload text)`,
+		`INSERT INTO pgbot_advise_schema_it.pgbot_same_name_it SELECT n, repeat('x', 80) FROM generate_series(1, 50000) AS n`,
+		`INSERT INTO public.pgbot_same_name_it VALUES (1, 'public control')`,
+		`ANALYZE pgbot_advise_schema_it.pgbot_same_name_it`,
+		`ANALYZE public.pgbot_same_name_it`,
+	} {
+		if _, err := fixture.Exec(ctx, stmt); err != nil {
+			t.Fatalf("fixture statement failed: %v", err)
+		}
+	}
+
+	target, err := conn.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("pgbot connect: %v", err)
+	}
+	defer target.Close()
+	if !target.Caps.HasHypopg {
+		t.Fatal("fixture installed hypopg but pgbot did not detect it")
+	}
+
+	var recs []advisor.Recommendation
+	err = target.ReadOnlyTx(ctx, func(tx *pggo.Tx) error {
+		planner := txPlanner{tx: tx, caps: target.Caps}
+		defer func() {
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cleanupCancel()
+			_ = planner.ResetHypo(cleanupCtx)
+		}()
+		recs, _ = advisor.Advise(ctx, planner, []advisor.QueryInput{{
+			QueryID: 1,
+			Text: "SELECT * FROM pgbot_advise_schema_it.pgbot_same_name_it " +
+				"WHERE customer_id = $1",
+			Scrubbed: "SELECT * FROM pgbot_advise_schema_it.pgbot_same_name_it " +
+				"WHERE customer_id = $1",
+			Calls:    100,
+			SharePct: 80,
+		}}, advisor.Options{MinImprovement: 0.5})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("advisor transaction: %v", err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("expected one non-public recommendation, got %+v", recs)
+	}
+	const want = "CREATE INDEX ON pgbot_advise_schema_it.pgbot_same_name_it (customer_id)"
+	if recs[0].Schema != "pgbot_advise_schema_it" || recs[0].IndexDDL != want {
+		t.Fatalf("advisor targeted the wrong same-named relation: %+v", recs[0])
+	}
 }
