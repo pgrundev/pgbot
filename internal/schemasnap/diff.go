@@ -241,12 +241,20 @@ func (d *differ) indexes() {
 	}
 	brel := relByOID(d.b)
 	for oid, ai := range aIdx {
-		if !ai.Valid {
+		bi, had := bIdx[oid]
+		switch {
+		case !ai.Valid && had && !bi.Valid:
+			// Already INVALID before: debris the reviewed migration did not
+			// leave, so it is noted but does not make the migration dangerous.
+			d.add(Finding{ID: "index_invalid", Severity: SevInfo, Object: qual(ai.Schema, ai.Name),
+				Detail: fmt.Sprintf("index %s was already INVALID before this migration (not caused by it)", qual(ai.Schema, ai.Name)),
+				Advice: "it is maintained on every write but never used; DROP INDEX CONCURRENTLY it and build it again"})
+		case !ai.Valid:
 			d.add(Finding{ID: "index_invalid", Severity: SevCritical, Object: qual(ai.Schema, ai.Name),
 				Detail: fmt.Sprintf("index %s is INVALID (a failed CREATE INDEX CONCURRENTLY leaves one behind)", qual(ai.Schema, ai.Name)),
 				Advice: "it is maintained on every write but never used; DROP INDEX CONCURRENTLY it and build it again"})
 		}
-		if _, ok := bIdx[oid]; ok {
+		if had {
 			continue
 		}
 		r, existed := brel[ai.RelOID]

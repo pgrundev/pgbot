@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -474,6 +475,57 @@ func TestSSHTunnel_recordsAcceptedHostKey(t *testing.T) {
 	}
 	if err := cb(f.srv.addr, remote, f.hostSigner.PublicKey()); err != nil {
 		t.Fatalf("the recorded key itself was refused: %v", err)
+	}
+}
+
+// HashKnownHosts yes (#155): the recorded entry must be OpenSSH's hashed form and
+// must not name the jump host, yet still pin it on the next run.
+func TestSSHTunnel_recordsHashedHostKey(t *testing.T) {
+	f := setupTunnelFixture(t)
+	fresh := filepath.Join(f.dir, "hashed_known_hosts")
+	f.writeConfig(t, "  StrictHostKeyChecking accept-new\n  HashKnownHosts yes\n  UserKnownHostsFile "+fresh+"\n")
+	echo := startEcho(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	nc, err := sshDialFunc()(ctx, "tcp", echo)
+	if err != nil {
+		t.Fatalf("first-sight dial under accept-new: %v", err)
+	}
+	roundTrip(t, nc, "hashed")
+
+	raw, err := os.ReadFile(fresh)
+	if err != nil {
+		t.Fatalf("accepted host key was not recorded: %v", err)
+	}
+	line := string(bytes.TrimSpace(raw))
+	host, _, _ := net.SplitHostPort(f.srv.addr)
+	if !strings.HasPrefix(line, "|1|") || strings.Contains(line, host) {
+		t.Fatalf("recorded known_hosts line is not hashed: %q", line)
+	}
+	if want := " " + strings.SplitN(knownhosts.Line([]string{f.srv.addr}, f.hostSigner.PublicKey()), " ", 2)[1]; !strings.HasSuffix(line, want) {
+		t.Fatalf("recorded known_hosts line %q does not carry the host key", line)
+	}
+	if st, err := os.Stat(fresh); err != nil {
+		t.Fatal(err)
+	} else if st.Mode().Perm() != 0o600 {
+		t.Fatalf("known_hosts mode = %v; want 0600", st.Mode().Perm())
+	}
+
+	cb, err := hostKeyCallback(f.alias)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote, err := net.ResolveTCPAddr("tcp", f.srv.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	impostor, _ := newSigner(t)
+	if err := cb(f.srv.addr, remote, impostor.PublicKey()); err == nil {
+		t.Fatal("a changed host key was accepted after the hashed original had been recorded")
+	}
+	if err := cb(f.srv.addr, remote, f.hostSigner.PublicKey()); err != nil {
+		t.Fatalf("the hashed recorded key itself was refused: %v", err)
 	}
 }
 

@@ -47,6 +47,18 @@ separately by `model.SchemaVersion` (currently 1.6.0).
 - `advise` keeps the resolved schema of non-public relations (`EXPLAIN VERBOSE`)
   instead of assuming `public` (#94, #95).
 - `init` quotes role and database names in the generated SQL and URL (#124).
+- **`--ssh-tunnel` honours `HashKnownHosts yes`** (#155). A jump-host key
+  accepted on first sight was always recorded as plaintext `[host]:port …`,
+  revealing the host to anyone reading known_hosts; it is now written in
+  OpenSSH's hashed `|1|salt|hmac` form when ssh_config asks for it, and still
+  verifies on the next run.
+- **`schema diff` no longer blames a migration for a pre-existing invalid
+  index** (#153). `index_invalid` fired as critical for every invalid index in
+  the "after" snapshot, so an unrelated, already-invalid index made a no-op
+  migration `dangerous` and failed `--fail-on critical`. It is now critical only
+  when the index is new or became invalid in the diffed window; one that was
+  already invalid before is reported as `info`, noting that it predates the
+  migration.
 
 ## [0.10.0] - 2026-11-16
 
