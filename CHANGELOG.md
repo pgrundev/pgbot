@@ -37,6 +37,12 @@ separately by `model.SchemaVersion` (currently 1.5.0).
 - `pgbot sql explain --ai` no longer labels the query plan as "the findings
   above" in the AI section's footer and fallback note; it now refers to the
   query plan that was actually printed (#140).
+- **AI consent now defaults to NO when stdin is not a terminal.** `pgbot sql
+  explain --ai`, `pgbot explain` and `pgbot ask` treated a non-TTY stdin (CI,
+  pipes, containers, agent shells) as consent and sent data — for `sql explain`,
+  your SQL text including literals — to a remote provider without asking. They
+  now refuse with a message to re-run with `--yes`; local endpoints still need
+  no confirmation (#143).
 
 ## [0.10.0] - 2026-11-16
 

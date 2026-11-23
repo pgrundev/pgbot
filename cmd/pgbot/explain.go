@@ -157,8 +157,15 @@ func confirmDisclosureOf(cmdName, payload string, llm ai.LanguageModel, yes bool
 		fmt.Fprintf(os.Stderr, "%s: WARNING — %s is plain http, so the key and the payload travel unencrypted.\n",
 			cmdName, ai.Host(llm.Endpoint()))
 	}
-	if yes || !isInteractive() {
+	if yes {
 		return true
+	}
+	if !isInteractive() {
+		// No one can answer the prompt (CI, a pipe, an agent's shell). Silence is
+		// not consent: only --yes sends data off the machine unattended.
+		fmt.Fprintf(os.Stderr, "%s: stdin is not a terminal, so consent cannot be asked — re-run with --yes to send %s to %s.\n",
+			cmdName, payload, ai.Host(llm.Endpoint()))
+		return false
 	}
 	fmt.Fprint(os.Stderr, "Continue? [y/N] ")
 	var resp string

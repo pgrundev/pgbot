@@ -774,8 +774,9 @@ or the key is unset, the deterministic report still stands.
 
 With a remote model, this sends the same PII-free Context shown by
 `inspect --json`. Before sending it, pgbot identifies the provider, host, and
-model and asks for confirmation. Local endpoints are identified as local and do
-not require confirmation.
+model and asks for confirmation. When stdin is not a terminal (CI, a pipe, a
+container) there is no one to ask, so pgbot refuses to send unless `--yes` is
+given. Local endpoints are identified as local and do not require confirmation.
 
 | Provider | Key | Default model | API |
 |---|---|---|---|

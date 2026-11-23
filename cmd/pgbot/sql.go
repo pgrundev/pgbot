@@ -59,7 +59,7 @@ func newSQLExplainCmd() *cobra.Command {
 			"names exactly what is sent: the query and its plan.",
 		Example: "  pgbot sql explain \"SELECT * FROM orders WHERE customer_id = $1\"\n" +
 			"  pgbot sql explain \"$DATABASE_URL\" \"SELECT count(*) FROM events WHERE kind = 'click'\"\n" +
-			"  cat slow.sql | pgbot sql explain --ai",
+			"  cat slow.sql | pgbot sql explain --ai --yes   # piped: no prompt possible, so --yes is required",
 		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSQLExplain(cmd, args, f)

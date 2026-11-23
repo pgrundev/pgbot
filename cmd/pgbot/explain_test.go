@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/pgrundev/pgbot/internal/ai"
 )
 
 // captureStdout returns what fn printed to os.Stdout.
@@ -26,6 +29,39 @@ func captureStdout(t *testing.T, fn func()) string {
 	fn()
 	_ = w.Close()
 	return <-done
+}
+
+// stubModel is an ai.LanguageModel that only answers the consent questions.
+type stubModel struct{ endpoint string }
+
+func (stubModel) Generate(context.Context, ai.Call) (*ai.Response, error) {
+	return nil, errors.New("stubModel.Generate must not be called")
+}
+func (stubModel) Provider() string   { return "openai" }
+func (stubModel) Model() string      { return "stub" }
+func (m stubModel) Endpoint() string { return m.endpoint }
+
+// With no terminal to answer the prompt, consent to send data to a remote
+// provider must default to NO unless --yes was given (#143). Local endpoints
+// keep auto-consent: nothing leaves the machine.
+func TestConfirmDisclosureNonInteractive(t *testing.T) {
+	orig := isInteractive
+	isInteractive = func() bool { return false }
+	defer func() { isInteractive = orig }()
+
+	remote := stubModel{endpoint: "https://api.openai.com/v1"}
+	if confirmDisclosureOf("pgbot sql explain", "your SQL text and its query plan", remote, false) {
+		t.Error("non-interactive without --yes must not consent to a remote send")
+	}
+	if confirmDisclosure("pgbot explain", remote, false) {
+		t.Error("explain: non-interactive without --yes must not consent to a remote send")
+	}
+	if !confirmDisclosureOf("pgbot sql explain", "your SQL text and its query plan", remote, true) {
+		t.Error("--yes must consent")
+	}
+	if !confirmDisclosureOf("pgbot sql explain", "your SQL text and its query plan", stubModel{endpoint: "http://127.0.0.1:11434/v1"}, false) {
+		t.Error("a local endpoint needs no consent")
+	}
 }
 
 // `sql explain --ai` renders a query plan, not findings, so its AI section must
