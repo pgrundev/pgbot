@@ -35,6 +35,18 @@ separately by `model.SchemaVersion` (currently 1.6.0).
   (#130). After an ICU upgrade it listed all ~870 built-in ICU collations in
   every database. Unused ones are now one `info` line. Mismatches in `--json`
   gain `unreferenced`; `SchemaVersion` → **1.6.0** (additive).
+- `idle_in_transaction` measures the age of idle transactions only; a long
+  *active* transaction no longer inflates it (#71). `--json` gains
+  `activity.longest_idle_xact_sec`.
+- `sequence_exhaustion` respects descending sequences and the owning column's
+  bounds (#102). Sequence items gain optional `floor`, `increment`, `cycle`,
+  `column_limited`.
+- `compare` / baseline diffs skip sections that weren't observed on both sides,
+  instead of reporting them as changes (#100, #101).
+- ERD output keeps same-named tables in different schemas apart (#96, #97).
+- `advise` keeps the resolved schema of non-public relations (`EXPLAIN VERBOSE`)
+  instead of assuming `public` (#94, #95).
+- `init` quotes role and database names in the generated SQL and URL (#124).
 
 ## [0.10.0] - 2026-11-16
 
