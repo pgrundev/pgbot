@@ -27,6 +27,13 @@ separately by `model.SchemaVersion` (currently 1.5.0).
   Other platforms get "PgBot Monitor currently supports macOS only"; every other
   command is unchanged. The `--json` contract is unchanged.
 
+### Fixed
+- **`--ssh-tunnel` honours `HashKnownHosts yes`** (#155). A jump-host key
+  accepted on first sight was always recorded as plaintext `[host]:port …`,
+  revealing the host to anyone reading known_hosts; it is now written in
+  OpenSSH's hashed `|1|salt|hmac` form when ssh_config asks for it, and still
+  verifies on the next run.
+
 ## [0.10.0] - 2026-11-16
 
 ### Added

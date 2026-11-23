@@ -433,9 +433,12 @@ func hostKeyCallback(alias string) (ssh.HostKeyCallback, error) {
 	if len(paths) > 0 {
 		record = paths[0]
 	}
+	// HashKnownHosts yes (Debian/Ubuntu's default) asks that a recorded entry not
+	// reveal the host's name or port; ssh honours it when it records, so must we.
+	hashed := isYes(ssh_config.Get(alias, "HashKnownHosts"))
 	accept := func(hostname string, key ssh.PublicKey) error {
 		fmt.Fprintf(os.Stderr, "pgbot: accepting unknown ssh host key for %q (%s)\n", alias, ssh.FingerprintSHA256(key))
-		recordHostKey(record, hostname, key)
+		recordHostKey(record, hostname, key, hashed)
 		return nil
 	}
 
@@ -484,9 +487,11 @@ func hostKeyCallback(alias string) (ssh.HostKeyCallback, error) {
 }
 
 // recordHostKey appends a newly accepted key to path the way ssh does under
-// accept-new. A failure to write is reported once and never blocks the
-// connection — the user chose a policy that accepts unknown hosts.
-func recordHostKey(path, hostname string, key ssh.PublicKey) {
+// accept-new. With hashed set (HashKnownHosts yes) the host is written in
+// OpenSSH's |1|salt|hmac form, so the file does not name it. A failure to write
+// is reported once and never blocks the connection — the user chose a policy
+// that accepts unknown hosts.
+func recordHostKey(path, hostname string, key ssh.PublicKey, hashed bool) {
 	if path == "" {
 		return
 	}
@@ -494,7 +499,7 @@ func recordHostKey(path, hostname string, key ssh.PublicKey) {
 	if err == nil {
 		var f *os.File
 		if f, err = os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
-			_, err = fmt.Fprintln(f, knownhosts.Line([]string{hostname}, key))
+			_, err = fmt.Fprintln(f, knownHostsLine(hostname, key, hashed))
 			if cerr := f.Close(); err == nil {
 				err = cerr
 			}
@@ -503,6 +508,17 @@ func recordHostKey(path, hostname string, key ssh.PublicKey) {
 	if err != nil {
 		warnOnce("known_hosts:"+path, fmt.Sprintf("pgbot: could not record the host key in %s: %v", path, err))
 	}
+}
+
+// knownHostsLine renders the known_hosts entry for hostname. HashHostname does
+// not normalise, so the host is normalised first ([host]:port for a non-22
+// port) — the same string ssh hashes and knownhosts later matches against.
+// Line re-normalises its input, which leaves a |1|… token unchanged.
+func knownHostsLine(hostname string, key ssh.PublicKey, hashed bool) string {
+	if hashed {
+		hostname = knownhosts.HashHostname(knownhosts.Normalize(hostname))
+	}
+	return knownhosts.Line([]string{hostname}, key)
 }
 
 // knownHostsPaths resolves UserKnownHostsFile to expanded paths, in config
