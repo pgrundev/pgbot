@@ -284,6 +284,9 @@ func TestPrepare_refusesAnythingButOneSelect(t *testing.T) {
 func TestHasPlaceholders(t *testing.T) {
 	yes := []string{"SELECT * FROM t WHERE id = $1", "select $2, $10 from t", "SELECT * FROM t WHERE a=$1AND b=2"}
 	no := []string{"SELECT 1", "SELECT '$1' FROM t", "SELECT '$' || 'x'", "SELECT * FROM t WHERE price > 5$"}
+	// Dollar-quoted literals are string constants too (#141): a $1 inside one is text.
+	yes = append(yes, "SELECT $$ $1 $$, $2", "SELECT $tag$ x $tag$ WHERE id = $1")
+	no = append(no, "SELECT $$ $1 $$", "SELECT $tag$ $1 $$ $2 $tag$ FROM t", "SELECT $q$ it's $1 $q$", "SELECT $$ unterminated $1")
 	for _, q := range yes {
 		if !HasPlaceholders(q) {
 			t.Errorf("HasPlaceholders(%q) = false", q)

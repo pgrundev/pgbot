@@ -38,8 +38,8 @@ func pgServiceFallback() string {
 }
 
 // isInteractive reports whether stdin is a terminal — used to decide whether to
-// prompt for confirmation (skip the prompt when piped/scripted).
-func isInteractive() bool {
+// prompt for confirmation. A variable so tests can pin it.
+var isInteractive = func() bool {
 	return term.IsTerminal(int(os.Stdin.Fd()))
 }
 
