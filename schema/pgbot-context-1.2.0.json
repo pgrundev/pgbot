@@ -41,9 +41,6 @@
         "longest_xact_sec": {
           "type": "number"
         },
-        "longest_idle_xact_sec": {
-          "type": "number"
-        },
         "longest_active_sec": {
           "type": "number"
         },
