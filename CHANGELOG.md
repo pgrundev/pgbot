@@ -7,6 +7,13 @@ separately by `model.SchemaVersion` (currently 1.6.0).
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-11-24
+
+### Fixed
+- Release only: publishes the 0.11.0 code to npm (`@pgbot/cli`), which the
+  0.11.0 release run could not do because of an expired registry token. No code
+  changes; GitHub, Homebrew and ghcr users can stay on 0.11.0.
+
 ## [0.11.0] - 2026-11-23
 
 ### Added
@@ -858,6 +865,7 @@ separately by `model.SchemaVersion` (currently 1.6.0).
   1.25.13, and golang.org/x/text to v0.39.0; `govulncheck` now runs in CI and
   reports no vulnerabilities.
 
+[0.11.1]: https://github.com/pgrundev/pgbot/releases/tag/v0.11.1
 [0.11.0]: https://github.com/pgrundev/pgbot/releases/tag/v0.11.0
 [0.10.0]: https://github.com/pgrundev/pgbot/releases/tag/v0.10.0
 [0.9.0]: https://github.com/pgrundev/pgbot/releases/tag/v0.9.0
