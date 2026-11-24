@@ -1,0 +1,95 @@
+name: npm publish (manual)
+
+# Re-publish an EXISTING release tag to npm without re-running the whole
+# release (the GitHub Release, Homebrew and ghcr already exist and can't be
+# recreated). Use it when release.yml's "publish npm packages" step failed —
+# e.g. an expired NPM_TOKEN or one without "bypass 2FA" (EOTP):
+#
+#   gh workflow run npm-publish.yml -R pgrundev/pgbot -f tag=v0.11.1
+#
+# It rebuilds the binaries from the tag with the same goreleaser config
+# (-trimpath, same Go from go.mod), assembles the packages with npm/build.mjs,
+# and publishes with provenance. Versions already on npm are skipped, so a
+# re-run after a partial publish is safe.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to publish, e.g. v0.11.1"
+        required: true
+
+permissions:
+  contents: read
+  id-token: write # npm --provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: validate tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::tag must look like v1.2.3"; exit 1; }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          version: "~> v2"
+          args: build --clean
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+      - name: publish npm packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          [ -n "$NODE_AUTH_TOKEN" ] || { echo "::error::NPM_TOKEN is not set"; exit 1; }
+          VERSION="${TAG#v}"
+          node npm/build.mjs "$VERSION"
+          publish() {
+            name="$(node -p "require('./$1/package.json').name")"
+            if npm view "${name}@${VERSION}" version >/dev/null 2>&1; then
+              echo "${name}@${VERSION} already published — skipping"
+            else
+              npm publish "$1" --provenance --access public
+            fi
+          }
+          for d in npm/staging/@pgbot/*/; do publish "${d%/}"; done
+          publish npm/staging/pgbot
+
+  npm-smoke:
+    needs: publish
+    name: npx smoke (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 20
+      - name: npx @pgbot/cli@<tag> --version exits 0
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          VERSION="${TAG#v}"
+          # Fresh cache per attempt — see release.yml for why.
+          for i in $(seq 1 20); do
+            cache="${RUNNER_TEMP:-/tmp}/npx-cache-$i"
+            if npx -y --cache "$cache" "@pgbot/cli@${VERSION}" --version; then exit 0; fi
+            echo "@pgbot/cli@${VERSION} not installable yet (attempt $i) — waiting for npm propagation"
+            sleep 30
+          done
+          echo "FAILED: npx @pgbot/cli@${VERSION} --version never succeeded"
+          exit 1
