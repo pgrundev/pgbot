@@ -174,6 +174,8 @@ import SwiftUI
             .help("Actions and model")
             .accessibilityLabel("Actions")
 
+            ComposerModeSwitch(psql: psql) { model.setPSQLMode($0, for: bot.id) }
+
             if psql {
                 Text("\(bot.connection.database)=>")
                     .font(.sys(size: 14, weight: .medium, design: .monospaced))
@@ -244,6 +246,66 @@ import SwiftUI
         if model.isPSQL(bot.id) { model.runPSQL(text, on: bot.id) } else { model.send(text, to: bot.id) }
         text = ""
         historyIndex = nil
+    }
+}
+
+/// Chat | PSQL, next to +: shows which mode the composer is in and switches it.
+/// The active segment is a raised pill (green for PSQL); the other stays quiet.
+@MainActor struct ComposerModeSwitch: View {
+    let psql: Bool
+    let set: (Bool) -> Void
+    @Namespace private var pill
+
+    var body: some View {
+        HStack(spacing: 2) {
+            segment("Chat", symbol: "bubble.left", active: !psql, tint: .primary) { set(false) }
+                .help("Ask in plain language")
+            segment("PSQL", symbol: "terminal", active: psql, tint: Palette.healthy, mono: true) { set(true) }
+                .help("Run read-only SQL and \\d commands (⌘⇧P)")
+        }
+        .padding(3)
+        .frame(height: 38)
+        .background(Palette.control, in: Capsule())
+        .animation(.snappy(duration: 0.22), value: psql)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Composer mode")
+    }
+
+    private func segment(_ title: String, symbol: String, active: Bool, tint: Color, mono: Bool = false,
+                         action: @escaping () -> Void) -> some View {
+        ModeSegment(title: title, symbol: symbol, active: active, tint: tint, mono: mono, pill: pill, action: action)
+    }
+}
+
+@MainActor private struct ModeSegment: View {
+    let title: String, symbol: String, active: Bool, tint: Color, mono: Bool
+    let pill: Namespace.ID
+    let action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: symbol).font(.system(size: 11.5, weight: .semibold))
+                Text(title).font(.sys(size: 12, weight: .semibold, design: mono ? .monospaced : .default))
+            }
+            .foregroundStyle(active ? AnyShapeStyle(tint) : AnyShapeStyle(.secondary.opacity(hover ? 1 : 0.8)))
+            .padding(.horizontal, 10)
+            .frame(maxHeight: .infinity)
+            .background {
+                if active {
+                    Capsule().fill(tint == .primary ? Palette.floating : Palette.healthy.opacity(0.16))
+                        .overlay(Capsule().strokeBorder(tint == .primary ? Palette.hairline.opacity(1.7) : Palette.healthy.opacity(0.45)))
+                        .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
+                        .matchedGeometryEffect(id: "pill", in: pill)
+                }
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(active ? .isSelected : [])
     }
 }
 

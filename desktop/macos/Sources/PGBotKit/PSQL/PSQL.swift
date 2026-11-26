@@ -178,15 +178,13 @@ public enum PSQL {
 
     End a statement with `;` and press Return to run it. Shift-Return adds a line, ↑ and ↓ walk your history.
 
-    | Command | Shows |
-    |---|---|
-    | `\\d name` | a table's columns and indexes |
-    | `\\d`, `\\dt`, `\\dv`, `\\dm`, `\\di`, `\\ds` | relations, tables, views, materialized views, indexes, sequences (add `+` for sizes) |
-    | `\\dn`, `\\df`, `\\dx` | schemas, functions, extensions |
-    | `\\l`, `\\du` | databases, roles |
-    | `\\conninfo` | who and where you're connected |
-    | `\\x` | expanded (one row per record) display |
-    | `\\q` | back to chat |
+    - `\\d name`: a table's columns and indexes
+    - `\\d` `\\dt` `\\dv` `\\dm` `\\di` `\\ds`: relations, tables, views, materialized views, indexes, sequences (add `+` for sizes)
+    - `\\dn` `\\df` `\\dx`: schemas, functions, extensions
+    - `\\l` `\\du`: databases, roles
+    - `\\conninfo`: who and where you're connected
+    - `\\x`: expanded display, one block per row
+    - `\\q`: back to chat
 
     Patterns work like psql: `\\dt public.order*`.
     """
