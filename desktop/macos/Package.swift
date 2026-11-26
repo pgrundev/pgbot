@@ -15,10 +15,12 @@ let package = Package(
     name: "PGBotDesktop",
     platforms: [.macOS(.v14)],
     products: [
+        .executable(name: "PGBot", targets: ["PGBot"]),
         .library(name: "PGBotKit", targets: ["PGBotKit"]),
     ],
     targets: [
         .target(name: "PGBotKit", path: "Sources/PGBotKit", linkerSettings: [.linkedLibrary("sqlite3")]),
+        .executableTarget(name: "PGBot", dependencies: ["PGBotKit"], path: "Sources/PGBot"),
         .executableTarget(name: "PGBotKitChecks", dependencies: ["PGBotKit"], path: "Tests/PGBotKitChecks"),
     ]
 )
