@@ -14,13 +14,15 @@ permissions:
 jobs:
   checks:
     name: PGBotKit checks + app bundle
-    # macos-14 ships Xcode 15.4 / Swift 5.10, the toolchain the package targets.
-    runs-on: macos-14
+    # The package declares swift-tools-version 5.10 (Swift 5 language mode), so
+    # the newer Xcode on macos-latest builds it unchanged.
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      - run: swift --version && xcodebuild -version
       - name: unit checks
         working-directory: desktop/macos
         run: swift run PGBotKitChecks
