@@ -47,8 +47,19 @@ public struct AnnouncementLedger: Codable, Sendable, Equatable {
     /// finding key → severity last announced
     public var announced: [String: Severity] = [:]
     public var connectivityDown = false
+    /// When the user last got a full health report in the chat: the daily
+    /// report, or the first report right after the database was added.
     public var lastDailyReport: Date?
     public init() {}
+
+    /// A full report is due once per calendar day, from `hour` on, unless one
+    /// has already been shown today. Adding a database at 3 PM shows its first
+    /// report; that one counts for today, so no second report follows a minute later.
+    public func isDailyReportDue(hour: Int?, now: Date, calendar: Calendar = .current) -> Bool {
+        guard let hour, calendar.component(.hour, from: now) >= hour else { return false }
+        if let last = lastDailyReport, calendar.isDate(last, inSameDayAs: now) { return false }
+        return true
+    }
 }
 
 public struct PlannedNotification: Sendable, Equatable {

@@ -235,6 +235,19 @@ check("connectivity outage announced once, recovery announced once") {
     let n = NotificationPlanner.plan(botName: "B", changes: .init(), scoreBefore: nil, scoreAfter: s, ledger: &ledger, prefs: .init())
     expectEq(n.map(\.dedupKey), ["connectivity|up"])
 }
+check("daily report: due once a day after its hour, and the first report counts for today") {
+    var cal = Calendar(identifier: .gregorian); cal.timeZone = TimeZone(identifier: "UTC")!
+    func at(_ day: Int, _ hour: Int) -> Date { cal.date(from: DateComponents(year: 2026, month: 11, day: day, hour: hour, minute: 5))! }
+    var l = AnnouncementLedger()
+    expect(!l.isDailyReportDue(hour: 9, now: at(26, 8), calendar: cal), "not before its hour")
+    expect(l.isDailyReportDue(hour: 9, now: at(26, 15), calendar: cal), "a database that never reported is due after its hour")
+    expect(!l.isDailyReportDue(hour: nil, now: at(26, 15), calendar: cal), "no daily report configured")
+    l.lastDailyReport = at(26, 15)   // the first report, right after adding the database at 3 PM
+    expect(!l.isDailyReportDue(hour: 9, now: at(26, 15).addingTimeInterval(60), calendar: cal), "no second report a minute later")
+    expect(!l.isDailyReportDue(hour: 9, now: at(26, 23), calendar: cal), "nor later that day")
+    expect(!l.isDailyReportDue(hour: 9, now: at(27, 8), calendar: cal), "next day, not before the hour")
+    expect(l.isDailyReportDue(hour: 9, now: at(27, 9), calendar: cal), "next day at the hour")
+}
 check("quiet hours wrap midnight") {
     var q = QuietHours(); q.enabled = true; q.startHour = 22; q.endHour = 7
     let cal = Calendar.current, d = Date()

@@ -410,6 +410,8 @@ final class AppModel {
         let planned = NotificationPlanner.plan(botName: bot.displayName,
                                                changes: changes ?? FindingChanges.compare(previous: [], current: rec.context.findings, ignoring: bot.schedule.ignoredFindingKeys),
                                                scoreBefore: prev?.score.value, scoreAfter: rec.score, ledger: &ledger, prefs: prefs(for: bot))
+        // The first report is today's full report; don't repeat it as a "daily" one.
+        if reason == .first { ledger.lastDailyReport = rec.finishedAt }
         if reason == .daily {
             ledger.lastDailyReport = Date()
             if !settings.disabledCategories.contains(.scheduledReport) {
@@ -445,9 +447,7 @@ final class AppModel {
         guard settings.backgroundMonitoring else { return }
         let cal = Calendar.current
         for b in bots where !b.isDemo && b.schedule.enabled {
-            guard let hour = b.schedule.dailyReportHour, cal.component(.hour, from: now) >= hour else { continue }
-            let ledger = ledgerFor(b.id)
-            if let last = ledger.lastDailyReport, cal.isDate(last, inSameDayAs: now) { continue }
+            guard ledgerFor(b.id).isDailyReportDue(hour: b.schedule.dailyReportHour, now: now, calendar: cal) else { continue }
             Task { await inspect(b.id, reason: .daily) }
         }
     }
