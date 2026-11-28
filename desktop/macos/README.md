@@ -30,7 +30,7 @@ open desktop/macos/build/PGBot.app
 
 ```sh
 cd desktop/macos
-swift run PGBotKitChecks                                   # 49 unit checks
+swift run PGBotKitChecks                                   # 50 unit checks
 PGBOT_TEST_DSN='postgresql://pgbot_ro:…@127.0.0.1:5432/postgres?sslmode=disable' \
 PGBOT_ENGINE_PATH=../../bin/pgbot swift run PGBotKitChecks # + 8 live-engine checks
 ```
