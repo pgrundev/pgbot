@@ -1,0 +1,58 @@
+name: desktop-macos
+
+# The native macOS app (desktop/macos) and the engine commands it drives.
+on:
+  push:
+    branches: [main]
+    paths: ["desktop/**", "cmd/**", "internal/**", "go.mod", "go.sum", ".github/workflows/desktop-macos.yml"]
+  pull_request:
+    paths: ["desktop/**", "cmd/**", "internal/**", "go.mod", "go.sum", ".github/workflows/desktop-macos.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: PGBotKit checks + app bundle
+    # The package declares swift-tools-version 5.10 (Swift 5 language mode), so
+    # the newer Xcode on macos-latest builds it unchanged.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: swift --version && xcodebuild -version
+      - name: unit checks
+        working-directory: desktop/macos
+        run: swift run PGBotKitChecks
+      - name: start PostgreSQL 17 with a pg_monitor role
+        run: |
+          brew install postgresql@17
+          PGBIN="$(brew --prefix postgresql@17)/bin"
+          "$PGBIN/initdb" -D "$RUNNER_TEMP/pg" -U postgres --auth=trust >/dev/null
+          printf "port=55432\nlisten_addresses='127.0.0.1'\nunix_socket_directories=''\n" >> "$RUNNER_TEMP/pg/postgresql.conf"
+          "$PGBIN/pg_ctl" -D "$RUNNER_TEMP/pg" -l "$RUNNER_TEMP/pg.log" -w start
+          "$PGBIN/psql" -h 127.0.0.1 -p 55432 -U postgres -q \
+            -c "CREATE ROLE pgbot_ro LOGIN PASSWORD 'ro'; GRANT pg_monitor TO pgbot_ro;"
+      - name: live engine checks (inspect, ask plumbing, PSQL mode read-only guarantees)
+        env:
+          PGBOT_TEST_DSN: postgresql://pgbot_ro:ro@127.0.0.1:55432/postgres?sslmode=disable
+          PGBOT_ENGINE_PATH: ${{ github.workspace }}/bin/pgbot
+        run: |
+          CGO_ENABLED=0 go build -o bin/pgbot ./cmd/pgbot
+          cd desktop/macos && swift run PGBotKitChecks
+      - name: sql run integration (writes never land, even as superuser)
+        env:
+          PGBOT_TEST_SUPERUSER_DSN: postgres://postgres@127.0.0.1:55432/postgres?sslmode=disable
+        run: go test ./cmd/pgbot/ -run 'Integration_sqlRun' -v
+      - name: build PGBot.app
+        run: desktop/macos/scripts/build-app.sh
+      - name: the bundle is complete and its engine runs
+        run: |
+          APP=desktop/macos/build/PGBot.app
+          test -x "$APP/Contents/MacOS/PGBot"
+          lipo -archs "$APP/Contents/Resources/engine/pgbot" | grep -q arm64
+          lipo -archs "$APP/Contents/Resources/engine/pgbot" | grep -q x86_64
+          "$APP/Contents/Resources/engine/pgbot" sql run --help | grep -q "READ ONLY"
+          codesign --verify --deep "$APP"

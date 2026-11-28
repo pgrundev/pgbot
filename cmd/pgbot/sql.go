@@ -24,11 +24,13 @@ import (
 func newSQLCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sql",
-		Short: "Statement-level tools: explain a query's plan in plain language",
-		Long: "Tools that take one SQL statement rather than inspecting the whole database.\n" +
-			"Everything here is read-only: a statement is planned, never executed.",
+		Short: "Statement-level tools: explain a plan, or run your own SQL read-only",
+		Long: "Tools that take SQL rather than inspecting the whole database. Everything here is\n" +
+			"read-only: `explain` plans a statement without executing it; `run` executes inside\n" +
+			"a READ ONLY transaction that is always rolled back.",
 	}
 	cmd.AddCommand(newSQLExplainCmd())
+	cmd.AddCommand(newSQLRunCmd())
 	return cmd
 }
 
